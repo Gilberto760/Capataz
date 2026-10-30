@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"/>
+  <title>Capataz</title>
+  <meta name="description" content="Controle de rebanho e gestão da propriedade rural, sincronizado com sua planilha Google"/>
+  <meta name="theme-color" content="#1b3a2b"/>
+  <link rel="manifest" href="manifest.json"/>
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml"/>
+  <link rel="apple-touch-icon" href="icons/icon.svg"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <link rel="stylesheet" href="css/style.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+</head>
+<body>
+  <div id="app">
+    <div class="top-bar">
+      <h1 id="topTitle">Capataz</h1>
+      <div id="syncStatus" class="sync-status" style="display:none;"></div>
+    </div>
+    <div class="subtabs" id="subtabs" style="display:none;"></div>
+    <div id="content"></div>
+    <div class="bottom-nav" id="bottomNav"></div>
+  </div>
+
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal-box" id="modalBox"></div>
+  </div>
+
+  <div id="toastContainer"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" onerror="console.warn('Leaflet não carregou — visualização do polígono no mapa ficará indisponível')"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js" onerror="console.warn('Leaflet.draw não carregou — edição de pastos no mapa ficará indisponível')"></script>
+  <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js" onerror="console.warn('JSZip não carregou — upload de arquivo .kmz ficará indisponível (use .kml)')"></script>
+  <script src="js/db.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/jsQR.min.js"></script>
+  <script src="js/zxing.min.js" onerror="console.warn('zxing.min.js não encontrado — leitura de código de barras ficará limitada a QR code')"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/dashboard.js"></script>
+  <script src="js/rebanho.js"></script>
+  <script src="js/compras.js"></script>
+  <script src="js/relatorios.js"></script>
+  <script src="js/cadastros.js"></script>
+  <script src="js/mapa.js"></script>
+  <script src="js/empreendimentos.js"></script>
+  <script src="js/atividades.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

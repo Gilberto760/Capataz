@@ -1,0 +1,15 @@
+{
+  "name": "Capataz - Gestão de Rebanho",
+  "short_name": "Capataz",
+  "description": "Controle de rebanho sincronizado com a planilha Google, com cache offline",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f5f3ee",
+  "theme_color": "#1b3a2b",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
