@@ -24,6 +24,18 @@ const Rebanho = {
   pelagemSugestao: ['Branca', 'Preta', 'Vermelha', 'Roxa', 'Fumaça', 'Amarela', 'Baia', 'Malhada', 'Tordilha'],
   finalidadesAnimal: ['Corte', 'Leite', 'Reprodução', 'Trabalho', 'Outra'],
   motivosMovimentacao: ['Compra', 'Venda', 'Nascimento', 'Morte', 'Abate', 'Transferência entre fazendas', 'Doação', 'Outro'],
+
+  // Regra única usada em toda venda registrada fora do formulário de Animal (Movimentação,
+  // importação de planilha da GTA): marca o animal como Vendido e, se for um(a) bezerro(a)
+  // que ainda não tinha desmame registrado, assume o desmame na data da própria venda.
+  patchSituacaoVendido(animalAtual, dataVenda) {
+    const patch = { situacao: 'Vendido' };
+    if (animalAtual && animalAtual.categoria === 'Bezerro(a)' && !animalAtual.desmame) {
+      patch.desmame = dataVenda || Utils.hoje();
+    }
+    return patch;
+  },
+
   categoriasSugestao(especie) {
     return this.categoriasPorEspecie[especie] || [];
   },
@@ -178,6 +190,8 @@ const Rebanho = {
       </div>
       <div class="filter-chips" id="filtroStatusAnimal">
         <button class="chip active" data-st="Ativo">Ativos</button>
+        <button class="chip" data-st="Vendido">Vendidos</button>
+        <button class="chip" data-st="Morreu">Morreram</button>
         <button class="chip" data-st="Inativo">Inativos</button>
         <button class="chip" data-st="todos">Todos</button>
       </div>
@@ -187,7 +201,7 @@ const Rebanho = {
     let statusAtivo = 'Ativo';
 
     const renderCardAnimal = (a) => {
-      const stCls = (a.situacao || 'Ativo') === 'Ativo' ? 'green' : 'red';
+      const stCls = { Ativo: 'green', Vendido: 'orange', Morreu: 'red' }[a.situacao || 'Ativo'] || 'red';
       const nPartos = Api.list('partos').filter(p => p.mae_id === a.id).length;
       return `
         <div class="rec-title">${Utils.escapeHtml(a.nome)} ${UI.badge(a.situacao || 'Ativo', stCls)} ${a._pendente ? UI.badge('Pendente de sincronização', 'orange') : ''}</div>
@@ -332,7 +346,7 @@ const Rebanho = {
       { key: 'mae_id', label: 'Mãe', type: 'select', optionsFrom: { fetch: () => this.animais().filter(a => a.sexo === 'F' && (!animal || a.id !== animal.id)), valueField: 'id', labelFn: a => a.nome } },
       { key: 'fazenda', label: 'Fazenda', type: 'text', suggestions: this.fazendasConhecidas() },
       { key: 'proprietario_id', label: 'Proprietário(a)', type: 'select', optionsFrom: { fetch: () => Api.list('proprietarios'), valueField: 'id', labelFn: p => p.nome } },
-      { key: 'situacao', label: 'Situação', type: 'select', options: [{ value: 'Ativo', label: 'Ativo' }, { value: 'Inativo', label: 'Inativo' }] },
+      { key: 'situacao', label: 'Situação', type: 'select', options: [{ value: 'Ativo', label: 'Ativo' }, { value: 'Vendido', label: 'Vendido' }, { value: 'Morreu', label: 'Morreu' }, { value: 'Inativo', label: 'Inativo' }] },
       { key: 'descarte', label: 'Descarte', type: 'checkbox' },
       { key: 'desmame', label: 'Data de desmame', type: 'date' },
       { key: 'peso_desmame', label: 'Peso ao desmame (kg)', type: 'number', step: '0.1' },
@@ -415,11 +429,32 @@ const Rebanho = {
       },
       onSalvar: async (dados) => {
         if (!dados.mae_id) delete dados.mae_id;
+        // Regras automáticas: morte sempre vira situação "Morreu"; venda de um(a) bezerro(a)
+        // que ainda não tinha desmame registrado assume o desmame na data da venda.
+        const situacaoAnterior = animal ? (animal.situacao || 'Ativo') : null;
+        if (dados.morte) {
+          dados.situacao = 'Morreu';
+        } else if (dados.situacao === 'Vendido' && dados.categoria === 'Bezerro(a)' && !dados.desmame) {
+          dados.desmame = Utils.hoje();
+        }
         if (animal) {
           await Api.atualizar('animais', animal.id, dados);
         } else {
           const novo = await Api.criar('animais', dados);
           if (onCriado) await onCriado(novo);
+        }
+        // Marcar um animal já cadastrado como Vendido/Morreu direto por aqui (sem passar pelo
+        // formulário de Movimentação) precisa deixar o mesmo rastro em Movimentações — senão a
+        // saída não aparece lá nem entra nas contagens que dependem de mov_rebanho.
+        if (animal && situacaoAnterior !== dados.situacao && ['Vendido', 'Morreu'].includes(dados.situacao)) {
+          await Api.criar('mov_rebanho', {
+            animal_id: animal.id,
+            data: dados.situacao === 'Morreu' ? (dados.morte || Utils.hoje()) : Utils.hoje(),
+            tipo: 'Saída',
+            motivo: dados.situacao === 'Morreu' ? 'Morte' : 'Venda',
+            fazenda: dados.fazenda,
+            observacao: dados.situacao === 'Morreu' ? (dados.causa_morte || null) : 'Marcado como Vendido direto no cadastro do animal.'
+          });
         }
         Utils.toast('Animal salvo.');
         App.refresh();
@@ -588,7 +623,14 @@ const Rebanho = {
         else await Api.criar('mov_rebanho', dados);
 
         if (dados.tipo === 'Saída' && ['Venda', 'Morte', 'Abate'].includes(dados.motivo) && dados.animal_id) {
-          await Api.atualizar('animais', dados.animal_id, { situacao: 'Inativo' });
+          if (dados.motivo === 'Venda') {
+            const animalAtual = Api.get('animais', dados.animal_id);
+            await Api.atualizar('animais', dados.animal_id, this.patchSituacaoVendido(animalAtual, dados.data));
+          } else if (dados.motivo === 'Morte') {
+            await Api.atualizar('animais', dados.animal_id, { situacao: 'Morreu', morte: dados.data });
+          } else {
+            await Api.atualizar('animais', dados.animal_id, { situacao: 'Inativo' });
+          }
         }
         Utils.toast('Movimentação salva.');
         App.refresh();
@@ -1007,6 +1049,35 @@ const Rebanho = {
       titulo: item ? 'Editar lote' : 'Novo lote da GTA',
       schema,
       dados: item || {},
+      onRender: (box) => {
+        // Só faz sentido depois que o lote já existe de verdade (tem id numa GTA já salva) —
+        // é a partir dele que sabemos sexo/quantidade pra montar o modelo certo.
+        if (!item || !gta || draft) return;
+        const form = box.querySelector('#dynForm');
+        const secao = document.createElement('div');
+        secao.className = 'form-group';
+        secao.innerHTML = `
+          <label>Planilha de animais deste lote (em vez de lançar um por um)</label>
+          <p class="hint" style="margin-top:0;">${gta.tipo === 'Compra'
+            ? 'Baixe o modelo, preencha o brinco/nome de cada animal e importe — cadastra todos de uma vez no Rebanho, já como Ativos.'
+            : 'Baixe o modelo, preencha o brinco/nome de cada animal vendido e importe — marca todos como Inativo no Rebanho de uma vez.'}</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-ghost" id="btnModeloLoteGta">⬇ Baixar modelo (.csv)</button>
+            <button type="button" class="btn btn-secondary" id="btnImportarLoteGta">📥 Importar planilha preenchida</button>
+            <input type="file" id="inputImportarLoteGta" accept=".csv" style="display:none;"/>
+          </div>
+        `;
+        form.appendChild(secao);
+        secao.querySelector('#btnModeloLoteGta').addEventListener('click', () => this.baixarModeloLoteGta(gta, item));
+        const inputImportar = secao.querySelector('#inputImportarLoteGta');
+        secao.querySelector('#btnImportarLoteGta').addEventListener('click', () => inputImportar.click());
+        inputImportar.addEventListener('change', async (e) => {
+          const arquivo = e.target.files[0];
+          if (!arquivo) return;
+          await this.importarPlanilhaLoteGta(gta, item, arquivo);
+          inputImportar.value = '';
+        });
+      },
       onSalvar: async (dados) => {
         const lancarRebanho = !!dados.lancar_rebanho;
         delete dados.lancar_rebanho;
@@ -1077,6 +1148,71 @@ const Rebanho = {
     Utils.toast(`${item.quantidade_real} animal(is) criado(s) no Rebanho a partir da GTA (idade estimada — edite os registros pra ajustar nome/brinco).`);
   },
 
+  /* ---------- PLANILHA DE ANIMAIS DO LOTE (GTA) ----------
+     Alternativa ao "lançar automaticamente": em vez de criar animais genéricos (Compra) ou só
+     avisar pra marcar na mão (Venda), gera um modelo .csv do tamanho exato do lote (sexo e
+     quantidade já vêm do lote) pro usuário preencher brinco/nome de cada animal de verdade, e
+     importa de volta — já cadastrando tudo (Compra) ou já inativando tudo (Venda) de uma vez. */
+  baixarModeloLoteGta(gta, item) {
+    const n = Number(item.quantidade_real || 0) || 1;
+    const sexoLabel = item.sexo === 'F' ? 'Fêmeas' : 'Machos';
+    let cabecalho, linhaVazia;
+    if (gta.tipo === 'Compra') {
+      cabecalho = 'Nome_Brinco;Raca;Pelagem;Nascimento;Observacao';
+      linhaVazia = ';;;;';
+    } else {
+      cabecalho = 'Nome_Brinco;Observacao';
+      linhaVazia = ';';
+    }
+    const linhas = Array.from({ length: n }, () => linhaVazia);
+    const conteudo = '﻿' + cabecalho + '\r\n' + linhas.join('\r\n') + '\r\n';
+    Utils.downloadArquivo(`modelo-gta-${gta.gta_numero}-${sexoLabel.toLowerCase()}.csv`, conteudo, 'text/csv;charset=utf-8');
+  },
+
+  async importarPlanilhaLoteGta(gta, item, arquivo) {
+    const texto = await arquivo.text();
+    const linhas = Empreendimentos._parseCsv(texto).filter(l => (l['nome_brinco'] || '').trim());
+    if (!linhas.length) { Utils.toast('Não encontrei nenhuma linha com nome/brinco preenchido nessa planilha.', 'error'); return; }
+    if (!Utils.confirmar(`${gta.tipo === 'Compra' ? 'Cadastrar' : 'Marcar como vendido(a)'} ${linhas.length} animal(is) a partir dessa planilha?`)) return;
+
+    const especie = gta.especie || 'Bovina';
+    if (gta.tipo === 'Compra') {
+      const nascimentoEstimado = Utils.somarDias(Utils.hoje(), -this.faixaEtariaMeioMeses(item.faixa_etaria_real) * 30);
+      for (const linha of linhas) {
+        const nascimento = Empreendimentos._parseDataPlanilha(linha['nascimento']) || nascimentoEstimado;
+        const dados = {
+          nome: linha['nome_brinco'].trim(),
+          especie, sexo: item.sexo, nascimento,
+          fazenda: gta.fazenda, situacao: 'Ativo',
+          raca: linha['raca'] || null,
+          pelagem: linha['pelagem'] || null,
+          observacao: linha['observacao'] || `Lançado a partir da GTA ${gta.gta_numero} (planilha de lote).`
+        };
+        if (especie === 'Bovina') dados.categoria = this.categoriaAutomaticaBovina(nascimento, item.sexo);
+        await Api.criar('animais', dados);
+      }
+      Utils.toast(`${linhas.length} animal(is) cadastrado(s) no Rebanho.`);
+    } else {
+      const naoEncontrados = [];
+      for (const linha of linhas) {
+        const nomeBuscado = linha['nome_brinco'].trim().toLowerCase();
+        const animal = this.animais().find(a => (a.situacao || 'Ativo') === 'Ativo' && (a.nome || '').trim().toLowerCase() === nomeBuscado);
+        if (!animal) { naoEncontrados.push(linha['nome_brinco'].trim()); continue; }
+        await Api.atualizar('animais', animal.id, this.patchSituacaoVendido(animal, gta.data));
+        await Api.criar('mov_rebanho', {
+          animal_id: animal.id, data: gta.data, tipo: 'Saída',
+          motivo: `Venda (GTA ${gta.gta_numero})`, fazenda: gta.fazenda,
+          observacao: linha['observacao'] || null
+        });
+      }
+      const qtdOk = linhas.length - naoEncontrados.length;
+      Utils.toast(naoEncontrados.length
+        ? `${qtdOk} animal(is) marcado(s) como vendido(s). Não encontrei (pelo nome/brinco, ativo): ${naoEncontrados.join(', ')}.`
+        : `${qtdOk} animal(is) marcado(s) como vendido(s).`, naoEncontrados.length ? 'error' : undefined);
+    }
+    App.refresh();
+  },
+
   /* ---------- INVENTÁRIO ANUAL (SEFAZ-TO) ----------
      Resumo para preparar o "Recibo de Resumo da Movimentação do Rebanho e
      Inventário de Gado" que a SEFAZ-TO exige todo ano (entregue/declarado em janeiro,
@@ -1091,16 +1227,22 @@ const Rebanho = {
     return '36_mais';
   },
 
+  // Guarda quais anos estão abertos no Inventário SEFAZ fora da função de render — senão,
+  // toda vez que a tela redesenha, tudo voltaria a aparecer fechado (mesmo bug que já corrigimos
+  // nas telas do Financeiro).
+  _anosInventarioAbertos: new Set(),
+
   renderInventarioSefaz(container) {
     const fazendas = this.fazendasConhecidas();
+    const anoAtual = new Date().getFullYear();
     container.innerHTML = `
       <div class="filter-chips" id="filtroFazendaInv">
         ${fazendas.map((f, i) => `<button class="chip ${i === 0 ? 'active' : ''}" data-fz="${Utils.escapeHtml(f)}">${Utils.escapeHtml(f)}</button>`).join('')}
         <button class="chip ${fazendas.length ? '' : 'active'}" data-fz="todas">Todas as fazendas</button>
       </div>
-      <div class="hint" style="margin-bottom:10px;">Contagem de bovinos ativos por sexo, faixa etária (0-12, 13-24, 25-36, 36+ meses) e classe fiscal — use como apoio para preencher o Inventário Anual na SEFAZ-TO. Período de referência: 01/01 a 31/12/${new Date().getFullYear()}.</div>
+      <div class="hint" style="margin-bottom:10px;">Contagem de bovinos por sexo, faixa etária (0-12, 13-24, 25-36, 36+ meses) e classe fiscal, na posição de 31/12 de cada ano (ou hoje, no ano corrente) — use como apoio para preencher o Inventário Anual na SEFAZ-TO. Clique num ano pra abrir.</div>
       <div id="idInventario"></div>
-      <div id="tabelaInventario"></div>
+      <div id="listaAnosInventario"></div>
       <div class="toolbar"><div></div><button class="btn btn-primary" id="btnImprimirInv">🖨️ Imprimir / salvar em PDF</button></div>
     `;
 
@@ -1109,21 +1251,42 @@ const Rebanho = {
     const ordemFaixas = ['0_12', '13_24', '25_36', '36_mais'];
     const labelFaixa = { '0_12': '0 a 12 meses', '13_24': '13 a 24 meses', '25_36': '25 a 36 meses', '36_mais': 'acima de 36 meses' };
 
-    const calcular = () => {
+    // Um bovino conta no inventário de um ano se já tinha nascido até 31/12 daquele ano (ou
+    // hoje, se for o ano corrente) e ainda não tinha saído do rebanho até essa mesma data —
+    // "saído" aqui é morte (campo morte) ou venda/inativação (última movimentação de Saída
+    // registrada pra ele). Sem um registro de saída, um animal não-Ativo fica de fora por
+    // segurança (não dá pra saber se ele já tinha saído naquele ano ou não).
+    const refDataDoAno = (ano) => ano >= anoAtual ? Utils.hoje() : `${ano}-12-31`;
+    const aindaNoRebanhoEm = (a, refData) => {
+      if (a.nascimento && a.nascimento > refData) return false;
+      const situacao = a.situacao || 'Ativo';
+      if (situacao === 'Ativo') return true;
+      if (situacao === 'Morreu') return !a.morte || a.morte > refData;
+      const saida = Api.list('mov_rebanho')
+        .filter(m => m.animal_id === a.id && m.tipo === 'Saída' && m.data)
+        .sort((x, y) => (y.data || '').localeCompare(x.data || ''))[0];
+      return !!saida && saida.data > refData;
+    };
+
+    const calcularParaAno = (ano) => {
+      const refData = refDataDoAno(ano);
       const vazio = () => ordemFaixas.reduce((acc, f) => { acc[f] = this.classesFiscais.reduce((a2, c) => { a2[c] = 0; return a2; }, {}); return acc; }, {});
       const contagem = { F: vazio(), M: vazio() };
       let semIdade = 0;
-      let lista = this.animais().filter(a => a.especie === 'Bovina' && (a.situacao || 'Ativo') === 'Ativo');
+      let lista = this.animais().filter(a => a.especie === 'Bovina' && aindaNoRebanhoEm(a, refData));
       if (fazendaAtiva !== 'todas') lista = lista.filter(a => a.fazenda === fazendaAtiva);
       lista.forEach(a => {
         if (!a.nascimento) { semIdade++; return; }
-        const meses = Math.floor(Utils.diasEntre(a.nascimento) / 30);
+        const meses = Math.floor(Utils.diasEntre(a.nascimento, refData) / 30);
         const faixa = this.faixaEtariaSefaz(meses);
         const sexo = a.sexo === 'F' ? 'F' : 'M';
         const classe = this.classesFiscais.includes(a.classe_fiscal) ? a.classe_fiscal : 'Comum';
         contagem[sexo][faixa][classe]++;
       });
-      return { contagem, semIdade };
+      let total = 0;
+      Object.values(contagem.F).forEach(f => Object.values(f).forEach(v => total += v));
+      Object.values(contagem.M).forEach(f => Object.values(f).forEach(v => total += v));
+      return { contagem, semIdade, total };
     };
 
     const colunaSexo = (contagemSexo, titulo) => {
@@ -1144,9 +1307,12 @@ const Rebanho = {
       </div>`;
     };
 
-    const desenhar = () => {
-      const { contagem, semIdade } = calcular();
+    const anosComDados = new Set(this.animais().filter(a => a.especie === 'Bovina' && a.nascimento).map(a => Number(a.nascimento.slice(0, 4))));
+    const anoMin = anosComDados.size ? Math.min(...anosComDados) : anoAtual;
+    const anos = [];
+    for (let y = anoAtual; y >= anoMin; y--) anos.push(y);
 
+    const desenhar = () => {
       // Identificação do produtor (só quando uma fazenda específica está selecionada)
       const idEl = container.querySelector('#idInventario');
       if (fazendaAtiva !== 'todas') {
@@ -1162,18 +1328,40 @@ const Rebanho = {
         idEl.innerHTML = '';
       }
 
-      let totalGeral = 0;
-      Object.values(contagem.F).forEach(f => Object.values(f).forEach(v => totalGeral += v));
-      Object.values(contagem.M).forEach(f => Object.values(f).forEach(v => totalGeral += v));
+      const raiz = container.querySelector('#listaAnosInventario');
+      raiz.innerHTML = anos.map(ano => {
+        const aberto = this._anosInventarioAbertos.has(ano);
+        const { total } = calcularParaAno(ano);
+        let html = `
+          <div class="rec-card" data-toggle-ano-inv="${ano}" style="cursor:pointer;">
+            <div class="rec-title">${aberto ? '▾' : '▸'} Ano ${ano}${ano === anoAtual ? ' (hoje)' : ''}</div>
+            <div class="rec-row"><span>${total} bovino(s)</span></div>
+          </div>`;
+        if (aberto) html += `<div id="detalheInv_${ano}" style="margin:8px 0 14px;"></div>`;
+        return html;
+      }).join('');
 
-      container.querySelector('#tabelaInventario').innerHTML = `
-        <div class="grid-2col">
-          ${colunaSexo(contagem.F, 'Fêmeas')}
-          ${colunaSexo(contagem.M, 'Machos')}
-        </div>
-        <div class="summary-box"><b>Total geral (F + M): ${totalGeral}</b></div>
-        ${semIdade ? `<div class="alert-item orange">${semIdade} bovino(s) sem data de nascimento não entraram na contagem — preencha a data de nascimento para incluir.</div>` : ''}
-      `;
+      anos.forEach(ano => {
+        if (!this._anosInventarioAbertos.has(ano)) return;
+        const { contagem, semIdade } = calcularParaAno(ano);
+        const alvo = document.getElementById(`detalheInv_${ano}`);
+        if (!alvo) return;
+        alvo.innerHTML = `
+          <div class="grid-2col">
+            ${colunaSexo(contagem.F, 'Fêmeas')}
+            ${colunaSexo(contagem.M, 'Machos')}
+          </div>
+          ${semIdade ? `<div class="alert-item orange">${semIdade} bovino(s) sem data de nascimento não entraram na contagem — preencha a data de nascimento para incluir.</div>` : ''}
+        `;
+      });
+
+      raiz.querySelectorAll('[data-toggle-ano-inv]').forEach(el => {
+        el.addEventListener('click', () => {
+          const ano = Number(el.dataset.toggleAnoInv);
+          if (this._anosInventarioAbertos.has(ano)) this._anosInventarioAbertos.delete(ano); else this._anosInventarioAbertos.add(ano);
+          desenhar();
+        });
+      });
     };
 
     container.querySelectorAll('#filtroFazendaInv .chip').forEach(chip => {
