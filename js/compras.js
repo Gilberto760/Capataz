@@ -527,7 +527,7 @@ const Compras = {
   abrirFormItem(item, compra, draft) {
     const schema = [
       { key: 'produto_id', label: 'Produto', type: 'select', required: true, optionsFrom: { fetch: () => Api.list('produtos').sort((a, b) => (a.nome || '').localeCompare(b.nome || '')), valueField: 'id', labelFn: p => p.nome } },
-      { key: 'unidade', label: 'Unidade (kg, L, un, sc...)', type: 'text' },
+      { key: 'unidade', label: 'Unidade', type: 'text', suggestions: ['kg', 'g', 'Litro', 'un', 'Saco 60 Kg', 'Tonelada', 'Arroba', 'Cabeça', 'Caixa', 'Pacote', 'Rolo', 'Metro'] },
       { key: 'quantidade', label: 'Quantidade', type: 'number', step: '0.01', required: true },
       { key: 'valor_unitario', label: 'Valor unitário (R$)', type: 'number', step: '0.01', required: true }
     ];
