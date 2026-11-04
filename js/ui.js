@@ -48,7 +48,21 @@ const UI = {
       if (f.type !== 'checkbox') {
         html += `<label>${Utils.escapeHtml(f.label)}${f.required ? ' *' : ''}</label>`;
       }
-      if (f.type === 'select') {
+      if (f.type === 'select' && f.busca) {
+        let opts = f.options || [];
+        if (f.optionsFrom) {
+          const rows = f.optionsFrom.fetch ? f.optionsFrom.fetch() : DB.list(f.optionsFrom.col);
+          const valueField = f.optionsFrom.valueField || 'id';
+          opts = rows.map(r => ({ value: f.optionsFrom.fetch ? r[valueField] : r.id, label: f.optionsFrom.labelFn(r) }));
+        }
+        const atual = opts.find(o => String(o.value) === String(val));
+        html += `<div class="combo-wrap" data-combo-select-field="${f.key}">
+          <input type="hidden" name="${f.key}" value="${Utils.escapeHtml(val)}"/>
+          <input type="text" class="combo-input" name="${f.key}__label" autocomplete="off" value="${Utils.escapeHtml(atual ? atual.label : '')}" placeholder="${Utils.escapeHtml(f.placeholder || 'Buscar...')}" ${f.required ? 'required' : ''}/>
+          <button type="button" class="combo-arrow" tabindex="-1">▾</button>
+          <div class="combo-list" id="comboSel_${f.key}" hidden></div>
+        </div>`;
+      } else if (f.type === 'select') {
         let opts = f.options || [];
         if (f.optionsFrom) {
           const rows = f.optionsFrom.fetch ? f.optionsFrom.fetch() : DB.list(f.optionsFrom.col);
@@ -113,10 +127,22 @@ const UI = {
     box.querySelector('#dynForm').addEventListener('submit', (e) => e.preventDefault());
 
     // Inicializa cada combobox (campo texto + sugestões)
-    box.querySelectorAll('.combo-wrap').forEach(wrap => {
+    box.querySelectorAll('[data-combo-field]').forEach(wrap => {
       const key = wrap.dataset.comboField;
       const campo = schema.find(f => f.key === key);
       this._initCombo(wrap, campo.suggestions || []);
+    });
+    // Inicializa cada combobox de seleção com busca (campo texto + lista id/label filtrável)
+    box.querySelectorAll('[data-combo-select-field]').forEach(wrap => {
+      const key = wrap.dataset.comboSelectField;
+      const campo = schema.find(f => f.key === key);
+      let opts = campo.options || [];
+      if (campo.optionsFrom) {
+        const rows = campo.optionsFrom.fetch ? campo.optionsFrom.fetch() : DB.list(campo.optionsFrom.col);
+        const valueField = campo.optionsFrom.valueField || 'id';
+        opts = rows.map(r => ({ value: campo.optionsFrom.fetch ? r[valueField] : r.id, label: campo.optionsFrom.labelFn(r) }));
+      }
+      this._initSelectCombo(wrap, opts);
     });
     // Clicar em qualquer lugar do formulário fora de um combobox fecha as listas abertas
     box.addEventListener('click', () => {
@@ -237,6 +263,54 @@ const UI = {
       if (!item) return;
       input.value = item.textContent;
       list.hidden = true;
+    });
+    wrap.addEventListener('click', (e) => e.stopPropagation());
+  },
+
+  /* Liga o comportamento de um combobox de seleção (id/label) com busca: digitar filtra por
+     qualquer trecho do nome (não só pelo começo), clicar numa opção grava o id no campo oculto
+     e mostra o nome no campo de texto. Se o campo perder foco sem bater com nenhuma opção,
+     volta pro que estava selecionado antes (ou limpa). */
+  _initSelectCombo(wrap, opts) {
+    const hidden = wrap.querySelector('input[type="hidden"]');
+    const input = wrap.querySelector('.combo-input');
+    const arrow = wrap.querySelector('.combo-arrow');
+    const list = wrap.querySelector('.combo-list');
+    wrap._opts = opts;
+
+    const desenharLista = (filtro) => {
+      const termo = (filtro || '').toLowerCase();
+      const itens = wrap._opts.filter(o => !termo || o.label.toLowerCase().includes(termo));
+      list.innerHTML = itens.length
+        ? itens.map(o => `<div class="combo-item" data-value="${Utils.escapeHtml(o.value)}">${Utils.escapeHtml(o.label)}</div>`).join('')
+        : `<div class="combo-item combo-empty">Nenhuma opção</div>`;
+    };
+
+    const abrirCompleta = () => { desenharLista(''); list.hidden = false; };
+
+    arrow.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!list.hidden) { list.hidden = true; return; }
+      abrirCompleta();
+    });
+    input.addEventListener('focus', abrirCompleta);
+    input.addEventListener('click', (e) => { e.stopPropagation(); if (list.hidden) abrirCompleta(); });
+    input.addEventListener('input', () => { desenharLista(input.value); list.hidden = false; });
+    list.addEventListener('click', (e) => {
+      const item = e.target.closest('.combo-item:not(.combo-empty)');
+      if (!item) return;
+      hidden.value = item.dataset.value;
+      input.value = item.textContent;
+      list.hidden = true;
+    });
+    input.addEventListener('blur', () => {
+      setTimeout(() => {
+        const atual = wrap._opts.find(o => String(o.value) === String(hidden.value));
+        if (atual && atual.label === input.value) return;
+        const match = wrap._opts.find(o => o.label.toLowerCase() === input.value.trim().toLowerCase());
+        if (match) { hidden.value = match.value; input.value = match.label; }
+        else { hidden.value = ''; input.value = ''; }
+      }, 150);
     });
     wrap.addEventListener('click', (e) => e.stopPropagation());
   },

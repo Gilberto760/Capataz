@@ -413,7 +413,7 @@ const Compras = {
     const vinculo = opcoes.vinculo || null;
     const itensDraft = reg ? null : (opcoes.itensDraft || []);
     const schema = [
-      { key: 'fornecedor_id', label: 'Fornecedor', type: 'select', required: true, optionsFrom: { fetch: () => Api.list('fornecedores').sort((a, b) => (a.nome || '').localeCompare(b.nome || '')), valueField: 'id', labelFn: f => f.nome } },
+      { key: 'fornecedor_id', label: 'Fornecedor', type: 'select', busca: true, required: true, optionsFrom: { fetch: () => Api.list('fornecedores').sort((a, b) => (a.nome || '').localeCompare(b.nome || '')), valueField: 'id', labelFn: f => f.nome } },
       { key: 'tipo', label: 'Tipo', type: 'text', suggestions: this.tiposDocumentoCompra },
       { key: 'nf', label: 'Número da NF/documento', type: 'text', scanner: true },
       { key: 'data', label: 'Data', type: 'date', required: true },
@@ -526,7 +526,7 @@ const Compras = {
   // direto no banco, guarda num array local até a compra inteira ser salva.
   abrirFormItem(item, compra, draft) {
     const schema = [
-      { key: 'produto_id', label: 'Produto', type: 'select', required: true, optionsFrom: { fetch: () => Api.list('produtos').sort((a, b) => (a.nome || '').localeCompare(b.nome || '')), valueField: 'id', labelFn: p => p.nome } },
+      { key: 'produto_id', label: 'Produto', type: 'select', busca: true, required: true, optionsFrom: { fetch: () => Api.list('produtos').sort((a, b) => (a.nome || '').localeCompare(b.nome || '')), valueField: 'id', labelFn: p => p.nome } },
       { key: 'unidade', label: 'Unidade', type: 'text', suggestions: ['kg', 'g', 'Litro', 'un', 'Saco 60 Kg', 'Tonelada', 'Arroba', 'Cabeça', 'Caixa', 'Pacote', 'Rolo', 'Metro'] },
       { key: 'quantidade', label: 'Quantidade', type: 'number', step: '0.01', required: true },
       { key: 'valor_unitario', label: 'Valor unitário (R$)', type: 'number', step: '0.01', required: true }
