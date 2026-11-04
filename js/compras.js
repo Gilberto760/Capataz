@@ -275,10 +275,14 @@ const Compras = {
     container.querySelector('#btnNovaCompra').addEventListener('click', () => this.abrirFormCompra(null));
 
     const renderCardCompra = (r) => {
-      const nItens = this.itensDaCompra(r.id).length;
+      const itens = this.itensDaCompra(r.id);
+      const nomesItens = itens.map(i => this.nomeProduto(i.produto_id)).filter(Boolean);
+      const resumoItens = nomesItens.length
+        ? (nomesItens.length > 2 ? nomesItens.slice(0, 2).join(', ') + ` e mais ${nomesItens.length - 2}` : nomesItens.join(', '))
+        : `${itens.length} item(ns)`;
       return `
         <div class="rec-title">${Utils.escapeHtml(this.nomeFornecedor(r.fornecedor_id))} ${r._pendente ? UI.badge('Pendente', 'orange') : ''}</div>
-        <div class="rec-sub">${Utils.escapeHtml(r.tipo || '-')} ${r.nf ? '· NF ' + Utils.escapeHtml(r.nf) : ''} · ${nItens} item(ns)</div>
+        <div class="rec-sub">${Utils.escapeHtml(r.tipo || '-')} · ${Utils.escapeHtml(resumoItens)}</div>
         <div class="rec-row">
           <span>${Utils.fmtData(r.data)}</span>
           <span>${Utils.fmtMoeda(r.valor_total)}</span>
