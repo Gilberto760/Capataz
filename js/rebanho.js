@@ -7,7 +7,22 @@ const Rebanho = {
     { key: 'movimentacoes', label: 'Movimentações' },
     { key: 'adapec', label: 'ADAPEC' },
     { key: 'gta', label: 'Compras/Vendas GTA' },
-    { key: 'inventario', label: 'Inventário SEFAZ' }
+    { key: 'inventario', label: 'Inventário SEFAZ' },
+    { key: 'evolucao', label: 'Evolução do Rebanho' }
+  ],
+
+  // Categorias do modelo de Evolução do Rebanho (projeção zootécnica), na ordem em que
+  // aparecem na planilha de referência. "ua" é o coeficiente de Unidade Animal de cada uma.
+  categoriasEvolucao: [
+    { key: 'matrizes', label: 'Matrizes', sexo: 'F', ua: 1.00 },
+    { key: 'novilhas23', label: 'Novilhas 2/3 anos', sexo: 'F', ua: 0.80 },
+    { key: 'novilhas12', label: 'Novilhas 1/2 anos', sexo: 'F', ua: 0.60 },
+    { key: 'bezerras', label: 'Bezerras', sexo: 'F', ua: 0.40 },
+    { key: 'bezerros', label: 'Bezerros', sexo: 'M', ua: 0.40 },
+    { key: 'novilhos12', label: 'Novilhos 1/2 anos', sexo: 'M', ua: 0.60 },
+    { key: 'novilhos23', label: 'Novilhos 2/3 anos', sexo: 'M', ua: 1.00 },
+    { key: 'novilhos3', label: 'Novilhos + 3 anos', sexo: 'M', ua: 1.00 },
+    { key: 'touros', label: 'Touros', sexo: 'M', ua: 1.25 }
   ],
 
   especies: ['Bovina', 'Equina', 'Ovina', 'Caprina', 'Suína', 'Outra'],
@@ -68,7 +83,8 @@ const Rebanho = {
       movimentacoes: () => this.renderMovimentacoes(container),
       adapec: () => this.renderAdapec(container),
       gta: () => this.renderGta(container),
-      inventario: () => this.renderInventarioSefaz(container)
+      inventario: () => this.renderInventarioSefaz(container),
+      evolucao: () => this.renderEvolucaoRebanho(container)
     };
     (map[sub] || map.animais)();
   },
@@ -1373,6 +1389,275 @@ const Rebanho = {
       });
     });
     container.querySelector('#btnImprimirInv').addEventListener('click', () => window.print());
+
+    desenhar();
+  },
+
+  /* ---------- EVOLUÇÃO DO REBANHO (projeção zootécnica, cohort por idade) ---------- */
+  // Mapeia um bovino pra uma das 9 categorias do modelo, pela mesma faixa etária usada no
+  // Inventário SEFAZ (0-12, 13-24, 25-36, 36+ meses) + sexo; machos acima de 36 meses só
+  // contam como "Touros" se o campo categoria do animal já estiver marcado como Reprodutor,
+  // senão entram em "Novilhos + 3 anos" (boi pronto pra engorda/venda).
+  categoriaEvolucaoDoAnimal(a, meses) {
+    const faixa = this.faixaEtariaSefaz(meses);
+    if (a.sexo === 'F') {
+      if (faixa === '0_12') return 'bezerras';
+      if (faixa === '13_24') return 'novilhas12';
+      if (faixa === '25_36') return 'novilhas23';
+      return 'matrizes';
+    }
+    if (faixa === '0_12') return 'bezerros';
+    if (faixa === '13_24') return 'novilhos12';
+    if (faixa === '25_36') return 'novilhos23';
+    return a.categoria === 'Reprodutor' ? 'touros' : 'novilhos3';
+  },
+
+  // Conta o rebanho bovino ATIVO de hoje (opcionalmente de uma fazenda) nas 9 categorias.
+  contarRebanhoAtualEvolucao(fazendaAtiva) {
+    const cab = this.categoriasEvolucao.reduce((acc, c) => { acc[c.key] = 0; return acc; }, {});
+    let semIdade = 0;
+    this.animais()
+      .filter(a => a.especie === 'Bovina' && (a.situacao || 'Ativo') === 'Ativo' && (fazendaAtiva === 'todas' || a.fazenda === fazendaAtiva))
+      .forEach(a => {
+        if (!a.nascimento) { semIdade++; return; }
+        const meses = Math.floor(Utils.diasEntre(a.nascimento) / 30);
+        cab[this.categoriaEvolucaoDoAnimal(a, meses)]++;
+      });
+    return { cab, semIdade };
+  },
+
+  // Projeta a evolução do rebanho ano a ano a partir de um INÍCIO (cabeças por categoria) e um
+  // jogo de coeficientes técnicos (taxas fixas, aplicadas em todos os anos). Nascimentos saem só
+  // das matrizes; cada categoria perde cabeças por morte e depois por venda/descarte (nessa
+  // ordem); a sobra de cada categoria "envelhece" pra categoria seguinte no próximo ano —
+  // novilhas/novilhos que não foram descartados até os 3 anos viram matrizes/novilhos+3, e os
+  // touros só repõem via a reposição anual informada (não existe "touro nascido na fazenda"
+  // nesse modelo simples).
+  projetarEvolucaoRebanho(inicio0, coefs, anos) {
+    const taxaDescarte = {
+      matrizes: coefs.descMatrizes, novilhas23: coefs.descNovilhas23, novilhas12: coefs.descNovilhas12,
+      bezerras: coefs.descBezerras, bezerros: coefs.descBezerros, novilhos12: coefs.descNovilhos12,
+      novilhos23: coefs.descNovilhos23, novilhos3: coefs.descNovilhos3, touros: coefs.descTouros
+    };
+    const taxaMortalidade = {
+      matrizes: coefs.mortAdultos, novilhas23: coefs.mortAdultos, touros: coefs.mortAdultos, novilhos23: coefs.mortAdultos, novilhos3: coefs.mortAdultos,
+      novilhas12: coefs.mort12, novilhos12: coefs.mort12,
+      bezerras: coefs.mortBezerros, bezerros: coefs.mortBezerros
+    };
+    let inicio = Object.assign({}, inicio0);
+    const anosCalculados = [];
+    for (let t = 0; t <= anos; t++) {
+      const totalNasc = Math.round((inicio.matrizes || 0) * coefs.natalidade / 100);
+      const nascMachos = Math.floor(totalNasc / 2);
+      const nascFemeas = totalNasc - nascMachos;
+      const entradaAno = Object.assign({}, inicio, {
+        bezerras: (inicio.bezerras || 0) + nascFemeas,
+        bezerros: (inicio.bezerros || 0) + nascMachos
+      });
+      const nascimentos = { bezerras: nascFemeas, bezerros: nascMachos };
+      const mortes = {}, vendas = {}, fim = {};
+      this.categoriasEvolucao.forEach(({ key }) => {
+        const entrada = entradaAno[key] || 0;
+        const m = Math.round(entrada * (taxaMortalidade[key] || 0) / 100);
+        const restante = entrada - m;
+        const v = Math.round(restante * (taxaDescarte[key] || 0) / 100);
+        mortes[key] = m; vendas[key] = v; fim[key] = restante - v;
+      });
+      anosCalculados.push({ ano: t, inicio: Object.assign({}, inicio), nascimentos, mortes, vendas, fim: Object.assign({}, fim) });
+      inicio = {
+        bezerras: 0, bezerros: 0,
+        novilhas12: fim.bezerras, novilhos12: fim.bezerros,
+        novilhas23: fim.novilhas12, novilhos23: fim.novilhos12,
+        matrizes: (fim.matrizes || 0) + (fim.novilhas23 || 0),
+        novilhos3: (fim.novilhos23 || 0) + (fim.novilhos3 || 0),
+        touros: (fim.touros || 0) + (coefs.reposicaoTouros || 0)
+      };
+    }
+    return anosCalculados;
+  },
+
+  _evolucaoCoefsPadrao: {
+    natalidade: 75, mortAdultos: 1, mort12: 2, mortBezerros: 5,
+    descMatrizes: 20, descNovilhas23: 30, descNovilhas12: 30, descBezerras: 5,
+    descBezerros: 100, descNovilhos12: 100, descNovilhos23: 100, descNovilhos3: 100, descTouros: 15,
+    reposicaoTouros: 0, anos: 10
+  },
+
+  // Estado do formulário de Evolução do Rebanho guardado fora da render (mesma razão do
+  // _anosInventarioAbertos: senão volta ao padrão toda vez que a tela redesenha).
+  _evolucaoState: null,
+  _evolucaoAnosAbertos: new Set(),
+
+  renderEvolucaoRebanho(container) {
+    const fazendas = this.fazendasConhecidas();
+    if (!this._evolucaoState) {
+      let salvo = null;
+      try { salvo = JSON.parse(localStorage.getItem('capataz_evolucao_rebanho') || 'null'); } catch (e) { salvo = null; }
+      this._evolucaoState = Object.assign({
+        modo: 'real',
+        fazenda: fazendas.length ? fazendas[0] : 'todas',
+        coefs: Object.assign({}, this._evolucaoCoefsPadrao),
+        manual: this.categoriasEvolucao.reduce((acc, c) => { acc[c.key] = 0; return acc; }, {})
+      }, salvo || {});
+    }
+    const estado = this._evolucaoState;
+    const salvarEstado = () => { try { localStorage.setItem('capataz_evolucao_rebanho', JSON.stringify(estado)); } catch (e) { /* sem espaço, ignora */ } };
+
+    const camposCoef = [
+      { key: 'natalidade', label: 'Natalidade (%)' },
+      { key: 'mortAdultos', label: 'Mortalidade adultos (%)' },
+      { key: 'mort12', label: 'Mortalidade 1/2 anos (%)' },
+      { key: 'mortBezerros', label: 'Mortalidade bezerros(as) (%)' },
+      { key: 'descMatrizes', label: 'Descarte matrizes (%)' },
+      { key: 'descNovilhas23', label: 'Descarte novilhas 2/3 anos (%)' },
+      { key: 'descNovilhas12', label: 'Descarte novilhas 1/2 anos (%)' },
+      { key: 'descBezerras', label: 'Descarte bezerras (%)' },
+      { key: 'descBezerros', label: 'Descarte bezerros (%)' },
+      { key: 'descNovilhos12', label: 'Descarte novilhos 1/2 anos (%)' },
+      { key: 'descNovilhos23', label: 'Descarte novilhos 2/3 anos (%)' },
+      { key: 'descNovilhos3', label: 'Descarte novilhos + 3 anos (%)' },
+      { key: 'descTouros', label: 'Descarte touros (%)' },
+      { key: 'reposicaoTouros', label: 'Reposição anual de touros (cab)' }
+    ];
+
+    container.innerHTML = `
+      <div class="hint" style="margin-bottom:10px;">Projeção da composição do rebanho bovino ano a ano, a partir dos nascimentos das matrizes e das taxas de mortalidade/descarte de cada categoria — use pra planejar capacidade de pasto, reposição de touros e volume de vendas futuras. Edite os coeficientes conforme a realidade da fazenda.</div>
+      <div class="form-card">
+        <h3 class="section-title" style="margin-top:0;">Ano 0 (ponto de partida)</h3>
+        <div class="filter-chips" style="margin-bottom:10px;">
+          <button class="chip ${estado.modo === 'real' ? 'active' : ''}" data-modo="real">Rebanho real atual</button>
+          <button class="chip ${estado.modo === 'manual' ? 'active' : ''}" data-modo="manual">Digitar manualmente</button>
+        </div>
+        <div id="evoAno0Real" ${estado.modo !== 'real' ? 'hidden' : ''}>
+          <div class="filter-chips" id="filtroFazendaEvo" style="margin-bottom:10px;">
+            ${fazendas.map(f => `<button class="chip ${estado.fazenda === f ? 'active' : ''}" data-fz="${Utils.escapeHtml(f)}">${Utils.escapeHtml(f)}</button>`).join('')}
+            <button class="chip ${estado.fazenda === 'todas' ? 'active' : ''}" data-fz="todas">Todas as fazendas</button>
+          </div>
+          <div id="evoResumoReal" class="hint"></div>
+        </div>
+        <div id="evoAno0Manual" class="grid-2col" ${estado.modo !== 'manual' ? 'hidden' : ''}>
+          ${this.categoriasEvolucao.map(c => `
+            <div class="form-group">
+              <label>${Utils.escapeHtml(c.label)} (cab)</label>
+              <input type="number" min="0" step="1" data-manual-cat="${c.key}" value="${estado.manual[c.key] || 0}"/>
+            </div>`).join('')}
+        </div>
+      </div>
+      <div class="form-card">
+        <h3 class="section-title" style="margin-top:0;">Coeficientes técnicos</h3>
+        <div class="grid-2col">
+          ${camposCoef.map(c => `
+            <div class="form-group">
+              <label>${Utils.escapeHtml(c.label)}</label>
+              <input type="number" min="0" step="0.1" data-coef="${c.key}" value="${estado.coefs[c.key]}"/>
+            </div>`).join('')}
+          <div class="form-group">
+            <label>Anos de projeção</label>
+            <input type="number" min="1" max="20" step="1" id="evoAnos" value="${estado.coefs.anos}"/>
+          </div>
+        </div>
+      </div>
+      <div id="listaAnosEvo"></div>
+      <div class="toolbar"><div></div><button class="btn btn-primary" id="btnImprimirEvo">🖨️ Imprimir / salvar em PDF</button></div>
+    `;
+
+    const desenhar = () => {
+      if (estado.modo === 'real') {
+        const { cab, semIdade } = this.contarRebanhoAtualEvolucao(estado.fazenda);
+        const totalCab = Object.values(cab).reduce((s, v) => s + v, 0);
+        container.querySelector('#evoResumoReal').innerHTML = `
+          ${this.categoriasEvolucao.map(c => `${Utils.escapeHtml(c.label)}: <b>${cab[c.key]}</b>`).join(' &nbsp;·&nbsp; ')}
+          <br/>Total: <b>${totalCab}</b> bovino(s) ativo(s)
+          ${semIdade ? `<br/><span style="color:var(--orange,#c97a1a);">${semIdade} sem data de nascimento não entraram na contagem.</span>` : ''}
+        `;
+      }
+
+      const inicio0 = estado.modo === 'real' ? this.contarRebanhoAtualEvolucao(estado.fazenda).cab : estado.manual;
+      const resultados = this.projetarEvolucaoRebanho(inicio0, estado.coefs, Number(estado.coefs.anos) || 10);
+
+      const raiz = container.querySelector('#listaAnosEvo');
+      raiz.innerHTML = resultados.map(r => {
+        const totalInicioCab = this.categoriasEvolucao.reduce((s, c) => s + (r.inicio[c.key] || 0), 0);
+        const totalFimCab = this.categoriasEvolucao.reduce((s, c) => s + (r.fim[c.key] || 0), 0);
+        const totalFimUa = this.categoriasEvolucao.reduce((s, c) => s + (r.fim[c.key] || 0) * c.ua, 0);
+        const aberto = this._evolucaoAnosAbertos.has(r.ano);
+        let html = `
+          <div class="rec-card" data-toggle-ano-evo="${r.ano}" style="cursor:pointer;">
+            <div class="rec-title">${aberto ? '▾' : '▸'} Ano ${r.ano}${r.ano === 0 ? ' (atual)' : ''}</div>
+            <div class="rec-row"><span>Início: ${totalInicioCab} cab</span><span>Fim: ${totalFimCab} cab</span><span>${Utils.fmtNum(totalFimUa, 1)} UA</span></div>
+          </div>`;
+        if (aberto) html += `<div id="detalheEvo_${r.ano}" style="margin:8px 0 14px;overflow-x:auto;"></div>`;
+        return html;
+      }).join('');
+
+      resultados.forEach(r => {
+        if (!this._evolucaoAnosAbertos.has(r.ano)) return;
+        const alvo = document.getElementById(`detalheEvo_${r.ano}`);
+        if (!alvo) return;
+        alvo.innerHTML = `
+          <table class="tabela-evolucao">
+            <thead><tr><th>Categoria</th><th>Início (cab)</th><th>Nasc.</th><th>Mortes</th><th>Vendas</th><th>Fim (cab)</th><th>Fim (UA)</th></tr></thead>
+            <tbody>
+              ${this.categoriasEvolucao.map(c => `
+                <tr>
+                  <td>${Utils.escapeHtml(c.label)}</td>
+                  <td>${r.inicio[c.key] || 0}</td>
+                  <td>${r.nascimentos[c.key] || 0}</td>
+                  <td>${r.mortes[c.key] || 0}</td>
+                  <td>${r.vendas[c.key] || 0}</td>
+                  <td><b>${r.fim[c.key] || 0}</b></td>
+                  <td>${Utils.fmtNum((r.fim[c.key] || 0) * c.ua, 1)}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        `;
+      });
+
+      raiz.querySelectorAll('[data-toggle-ano-evo]').forEach(el => {
+        el.addEventListener('click', () => {
+          const ano = Number(el.dataset.toggleAnoEvo);
+          if (this._evolucaoAnosAbertos.has(ano)) this._evolucaoAnosAbertos.delete(ano); else this._evolucaoAnosAbertos.add(ano);
+          desenhar();
+        });
+      });
+    };
+
+    container.querySelectorAll('.filter-chips [data-modo]').forEach(chip => {
+      chip.addEventListener('click', () => {
+        estado.modo = chip.dataset.modo;
+        salvarEstado();
+        this.renderEvolucaoRebanho(container);
+      });
+    });
+    container.querySelectorAll('#filtroFazendaEvo .chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        container.querySelectorAll('#filtroFazendaEvo .chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        estado.fazenda = chip.dataset.fz;
+        salvarEstado();
+        desenhar();
+      });
+    });
+    container.querySelectorAll('[data-manual-cat]').forEach(inp => {
+      inp.addEventListener('input', () => {
+        estado.manual[inp.dataset.manualCat] = Number(inp.value) || 0;
+        salvarEstado();
+        desenhar();
+      });
+    });
+    container.querySelectorAll('[data-coef]').forEach(inp => {
+      inp.addEventListener('input', () => {
+        estado.coefs[inp.dataset.coef] = Number(inp.value) || 0;
+        salvarEstado();
+        desenhar();
+      });
+    });
+    container.querySelector('#evoAnos').addEventListener('input', (e) => {
+      estado.coefs.anos = Math.max(1, Math.min(20, Number(e.target.value) || 10));
+      salvarEstado();
+      desenhar();
+    });
+    container.querySelector('#btnImprimirEvo').addEventListener('click', () => window.print());
 
     desenhar();
   }

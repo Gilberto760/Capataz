@@ -173,6 +173,12 @@ body {
 /* ---------- Gráfico de barras simples ---------- */
 .bar-chart { background:#fff; border:1px solid var(--border); border-radius: var(--radius); padding:14px; margin-bottom:14px; }
 
+/* ---------- Tabela simples (Evolução do Rebanho) ---------- */
+.tabela-evolucao { width:100%; border-collapse: collapse; font-size:13px; min-width:560px; }
+.tabela-evolucao th, .tabela-evolucao td { padding:6px 8px; text-align:right; border-bottom:1px solid var(--border); }
+.tabela-evolucao th:first-child, .tabela-evolucao td:first-child { text-align:left; }
+.tabela-evolucao thead th { font-weight:600; color:var(--muted, #666); }
+
 /* ---------- Grade de 2 colunas em telas largas (ADAPEC, Inventário SEFAZ...) ---------- */
 .grid-2col { display:grid; grid-template-columns: 1fr; gap:0 20px; }
 @media (min-width:860px) {
