@@ -1,3 +1,7 @@
+/* O atributo hidden tem que ganhar sempre, mesmo de elementos que já têm display:flex/grid
+   declarado por classe (ex: .grid-2col, .grid-3col) — senão "esconder" não esconde nada. */
+[hidden] { display: none !important; }
+
 :root {
   --green-900:#1b3a2b;
   --green-700:#2f6d44;
