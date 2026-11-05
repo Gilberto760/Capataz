@@ -1480,7 +1480,7 @@ const Rebanho = {
     natalidade: 75, mortAdultos: 1, mort12: 2, mortBezerros: 5,
     descMatrizes: 20, descNovilhas23: 30, descNovilhas12: 30, descBezerras: 5,
     descBezerros: 100, descNovilhos12: 100, descNovilhos23: 100, descNovilhos3: 100, descTouros: 15,
-    reposicaoTouros: 0, anos: 10
+    reposicaoTouros: 0, anos: 10, custoAnualUA: 0
   },
 
   // Estado do formulário de Evolução do Rebanho guardado fora da render (mesma razão do
@@ -1493,11 +1493,14 @@ const Rebanho = {
     if (!this._evolucaoState) {
       let salvo = null;
       try { salvo = JSON.parse(localStorage.getItem('capataz_evolucao_rebanho') || 'null'); } catch (e) { salvo = null; }
+      const precosPadrao = this.categoriasEvolucao.reduce((acc, c) => { acc['preco_' + c.key] = 0; return acc; }, {});
       this._evolucaoState = Object.assign({
         modo: 'real',
         fazenda: fazendas.length ? fazendas[0] : 'todas',
-        coefs: Object.assign({}, this._evolucaoCoefsPadrao),
-        manual: this.categoriasEvolucao.reduce((acc, c) => { acc[c.key] = 0; return acc; }, {})
+        coefs: Object.assign({}, this._evolucaoCoefsPadrao, precosPadrao),
+        manual: this.categoriasEvolucao.reduce((acc, c) => { acc[c.key] = 0; return acc; }, {}),
+        coefAberto: false,
+        precosAberto: false
       }, salvo || {});
     }
     const estado = this._evolucaoState;
@@ -1519,6 +1522,7 @@ const Rebanho = {
       { key: 'descTouros', label: 'Descarte touros (%)' },
       { key: 'reposicaoTouros', label: 'Reposição anual de touros (cab)' }
     ];
+    const camposPreco = this.categoriasEvolucao.map(c => ({ key: 'preco_' + c.key, label: `Venda ${c.label} (R$/cab)` }));
 
     container.innerHTML = `
       <div class="hint" style="margin-bottom:10px;">Projeção da composição do rebanho bovino ano a ano, a partir dos nascimentos das matrizes e das taxas de mortalidade/descarte de cada categoria — use pra planejar capacidade de pasto, reposição de touros e volume de vendas futuras. Edite os coeficientes conforme a realidade da fazenda.</div>
@@ -1535,17 +1539,19 @@ const Rebanho = {
           </div>
           <div id="evoResumoReal" class="hint"></div>
         </div>
-        <div id="evoAno0Manual" class="grid-2col" ${estado.modo !== 'manual' ? 'hidden' : ''}>
-          ${this.categoriasEvolucao.map(c => `
-            <div class="form-group">
-              <label>${Utils.escapeHtml(c.label)} (cab)</label>
-              <input type="number" min="0" step="1" data-manual-cat="${c.key}" value="${estado.manual[c.key] || 0}"/>
-            </div>`).join('')}
+        <div id="evoAno0ManualWrap" ${estado.modo !== 'manual' ? 'hidden' : ''}>
+          <div class="grid-2col">
+            ${this.categoriasEvolucao.map(c => `
+              <div class="form-group">
+                <label>${Utils.escapeHtml(c.label)} (cab)</label>
+                <input type="number" min="0" step="1" data-manual-cat="${c.key}" value="${estado.manual[c.key] || 0}"/>
+              </div>`).join('')}
+          </div>
         </div>
       </div>
       <div class="form-card">
-        <h3 class="section-title" style="margin-top:0;">Coeficientes técnicos</h3>
-        <div class="grid-2col">
+        <h3 class="section-title" style="margin-top:0;cursor:pointer;" data-toggle-coef>${estado.coefAberto ? '▾' : '▸'} Coeficientes técnicos</h3>
+        <div class="grid-3col" ${estado.coefAberto ? '' : 'hidden'}>
           ${camposCoef.map(c => `
             <div class="form-group">
               <label>${Utils.escapeHtml(c.label)}</label>
@@ -1554,6 +1560,20 @@ const Rebanho = {
           <div class="form-group">
             <label>Anos de projeção</label>
             <input type="number" min="1" max="20" step="1" id="evoAnos" value="${estado.coefs.anos}"/>
+          </div>
+        </div>
+      </div>
+      <div class="form-card">
+        <h3 class="section-title" style="margin-top:0;cursor:pointer;" data-toggle-precos>${estado.precosAberto ? '▾' : '▸'} Preços de venda e custo (R$)</h3>
+        <div class="grid-3col" ${estado.precosAberto ? '' : 'hidden'}>
+          ${camposPreco.map(c => `
+            <div class="form-group">
+              <label>${Utils.escapeHtml(c.label)}</label>
+              <input type="number" min="0" step="1" data-coef="${c.key}" value="${estado.coefs[c.key]}"/>
+            </div>`).join('')}
+          <div class="form-group">
+            <label>Custo anual de manutenção (R$/UA)</label>
+            <input type="number" min="0" step="1" data-coef="custoAnualUA" value="${estado.coefs.custoAnualUA}"/>
           </div>
         </div>
       </div>
@@ -1579,12 +1599,17 @@ const Rebanho = {
       raiz.innerHTML = resultados.map(r => {
         const totalInicioCab = this.categoriasEvolucao.reduce((s, c) => s + (r.inicio[c.key] || 0), 0);
         const totalFimCab = this.categoriasEvolucao.reduce((s, c) => s + (r.fim[c.key] || 0), 0);
+        const totalInicioUa = this.categoriasEvolucao.reduce((s, c) => s + (r.inicio[c.key] || 0) * c.ua, 0);
         const totalFimUa = this.categoriasEvolucao.reduce((s, c) => s + (r.fim[c.key] || 0) * c.ua, 0);
+        const receita = this.categoriasEvolucao.reduce((s, c) => s + (r.vendas[c.key] || 0) * (Number(estado.coefs['preco_' + c.key]) || 0), 0);
+        const uaMedia = (totalInicioUa + totalFimUa) / 2;
+        const despesa = uaMedia * (Number(estado.coefs.custoAnualUA) || 0);
         const aberto = this._evolucaoAnosAbertos.has(r.ano);
         let html = `
           <div class="rec-card" data-toggle-ano-evo="${r.ano}" style="cursor:pointer;">
             <div class="rec-title">${aberto ? '▾' : '▸'} Ano ${r.ano}${r.ano === 0 ? ' (atual)' : ''}</div>
             <div class="rec-row"><span>Início: ${totalInicioCab} cab</span><span>Fim: ${totalFimCab} cab</span><span>${Utils.fmtNum(totalFimUa, 1)} UA</span></div>
+            <div class="rec-row"><span>Receita: ${Utils.fmtMoeda(receita)}</span><span>Despesa: ${Utils.fmtMoeda(despesa)}</span><span>Saldo: ${Utils.fmtMoeda(receita - despesa)}</span></div>
           </div>`;
         if (aberto) html += `<div id="detalheEvo_${r.ano}" style="margin:8px 0 14px;overflow-x:auto;"></div>`;
         return html;
@@ -1594,22 +1619,32 @@ const Rebanho = {
         if (!this._evolucaoAnosAbertos.has(r.ano)) return;
         const alvo = document.getElementById(`detalheEvo_${r.ano}`);
         if (!alvo) return;
+        let receitaTotal = 0;
+        const linhas = this.categoriasEvolucao.map(c => {
+          const preco = Number(estado.coefs['preco_' + c.key]) || 0;
+          const receitaCat = (r.vendas[c.key] || 0) * preco;
+          receitaTotal += receitaCat;
+          return `
+            <tr>
+              <td>${Utils.escapeHtml(c.label)}</td>
+              <td>${r.inicio[c.key] || 0}</td>
+              <td>${r.nascimentos[c.key] || 0}</td>
+              <td>${r.mortes[c.key] || 0}</td>
+              <td>${r.vendas[c.key] || 0}</td>
+              <td><b>${r.fim[c.key] || 0}</b></td>
+              <td>${Utils.fmtNum((r.fim[c.key] || 0) * c.ua, 1)}</td>
+              <td>${Utils.fmtMoeda(receitaCat)}</td>
+            </tr>`;
+        }).join('');
+        const totalInicioUa = this.categoriasEvolucao.reduce((s, c) => s + (r.inicio[c.key] || 0) * c.ua, 0);
+        const totalFimUa = this.categoriasEvolucao.reduce((s, c) => s + (r.fim[c.key] || 0) * c.ua, 0);
+        const despesaAno = ((totalInicioUa + totalFimUa) / 2) * (Number(estado.coefs.custoAnualUA) || 0);
         alvo.innerHTML = `
           <table class="tabela-evolucao">
-            <thead><tr><th>Categoria</th><th>Início (cab)</th><th>Nasc.</th><th>Mortes</th><th>Vendas</th><th>Fim (cab)</th><th>Fim (UA)</th></tr></thead>
-            <tbody>
-              ${this.categoriasEvolucao.map(c => `
-                <tr>
-                  <td>${Utils.escapeHtml(c.label)}</td>
-                  <td>${r.inicio[c.key] || 0}</td>
-                  <td>${r.nascimentos[c.key] || 0}</td>
-                  <td>${r.mortes[c.key] || 0}</td>
-                  <td>${r.vendas[c.key] || 0}</td>
-                  <td><b>${r.fim[c.key] || 0}</b></td>
-                  <td>${Utils.fmtNum((r.fim[c.key] || 0) * c.ua, 1)}</td>
-                </tr>`).join('')}
-            </tbody>
+            <thead><tr><th>Categoria</th><th>Início (cab)</th><th>Nasc.</th><th>Mortes</th><th>Vendas</th><th>Fim (cab)</th><th>Fim (UA)</th><th>Receita (R$)</th></tr></thead>
+            <tbody>${linhas}</tbody>
           </table>
+          <div class="hint" style="margin-top:8px;">Receita de vendas do ano: <b>${Utils.fmtMoeda(receitaTotal)}</b> · Despesa estimada de manutenção (UA média × custo/UA): <b>${Utils.fmtMoeda(despesaAno)}</b> · Saldo: <b>${Utils.fmtMoeda(receitaTotal - despesaAno)}</b></div>
         `;
       });
 
@@ -1628,6 +1663,16 @@ const Rebanho = {
         salvarEstado();
         this.renderEvolucaoRebanho(container);
       });
+    });
+    container.querySelector('[data-toggle-coef]').addEventListener('click', () => {
+      estado.coefAberto = !estado.coefAberto;
+      salvarEstado();
+      this.renderEvolucaoRebanho(container);
+    });
+    container.querySelector('[data-toggle-precos]').addEventListener('click', () => {
+      estado.precosAberto = !estado.precosAberto;
+      salvarEstado();
+      this.renderEvolucaoRebanho(container);
     });
     container.querySelectorAll('#filtroFazendaEvo .chip').forEach(chip => {
       chip.addEventListener('click', () => {

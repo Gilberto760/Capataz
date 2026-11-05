@@ -185,6 +185,15 @@ body {
   .grid-2col { grid-template-columns: 1fr 1fr; }
 }
 
+/* ---------- Grade de 3 colunas em telas largas (coeficientes da Evolução do Rebanho) ---------- */
+.grid-3col { display:grid; grid-template-columns: 1fr; gap:0 16px; }
+@media (min-width:640px) {
+  .grid-3col { grid-template-columns: 1fr 1fr; }
+}
+@media (min-width:980px) {
+  .grid-3col { grid-template-columns: 1fr 1fr 1fr; }
+}
+
 /* ---------- ADAPEC: alinha os valores de Real/Legal entre o cabeçalho e as linhas ---------- */
 .adapec-linha { flex-wrap:nowrap; }
 .adapec-rotulo { flex:1; min-width:0; }
