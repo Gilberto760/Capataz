@@ -449,7 +449,11 @@ const Cadastros = {
     };
   },
 
-  _abrirFormListaSimples(tabela, rotulo, reg) {
+  // opcoes.onCriado(novoRegistro): chamado em vez do App.refresh() padrão quando o cadastro é
+  // aberto "por dentro" de outro formulário (ex: "+ Nova tarefa..." dentro de Lançar tarefa/custo),
+  // pra poder reabrir o formulário de origem já com o item recém-criado selecionado.
+  _abrirFormListaSimples(tabela, rotulo, reg, opcoes) {
+    opcoes = opcoes || {};
     const schema = [
       { key: 'nome', label: `Nome ${reg ? '' : '— ' + rotulo}`.trim(), type: 'text', required: true },
       { key: 'observacao', label: 'Observação', type: 'textarea' }
@@ -459,16 +463,22 @@ const Cadastros = {
       schema,
       dados: reg || {},
       onSalvar: async (dados) => {
-        if (reg) await Api.atualizar(tabela, reg.id, dados);
-        else await Api.criar(tabela, dados);
-        Utils.toast(`${rotulo} salvo(a).`);
-        App.refresh();
+        if (reg) {
+          await Api.atualizar(tabela, reg.id, dados);
+          Utils.toast(`${rotulo} salvo(a).`);
+          App.refresh();
+        } else {
+          const novo = await Api.criar(tabela, dados);
+          Utils.toast(`${rotulo} salvo(a).`);
+          if (opcoes.onCriado) opcoes.onCriado(novo); else App.refresh();
+        }
       },
       onExcluir: reg ? async () => {
         await Api.excluir(tabela, reg.id);
         Utils.toast(`${rotulo} excluído(a).`);
         App.refresh();
-      } : null
+      } : null,
+      onCancelar: (!reg && opcoes.onCancelado) ? opcoes.onCancelado : undefined
     });
   },
 

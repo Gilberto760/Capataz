@@ -1,4 +1,4 @@
-const CACHE_NAME = 'capataz-v72';
+const CACHE_NAME = 'capataz-v73';
 const ARQUIVOS = [
   './',
   './index.html',

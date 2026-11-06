@@ -344,7 +344,10 @@ const Empreendimentos = {
     });
   },
 
-  abrirFormTarefaEtapa(etapa, reg) {
+  // opcoes.dadosIniciais: usado só quando reg é null, pra reabrir o formulário com o que o
+  // usuário já tinha preenchido depois de criar uma tarefa nova pelo "+ Nova tarefa..." do select.
+  abrirFormTarefaEtapa(etapa, reg, opcoes) {
+    opcoes = opcoes || {};
     const schema = [
       { key: 'tarefa_id', label: 'Tarefa', type: 'select', required: true, optionsFrom: { fetch: () => Cadastros.tarefasConhecidas(), valueField: 'id', labelFn: t => t.nome } },
       { key: 'data_inicio', label: 'Data de início', type: 'date' },
@@ -356,7 +359,14 @@ const Empreendimentos = {
     UI.abrirFormulario({
       titulo: reg ? 'Editar tarefa da etapa' : 'Lançar tarefa',
       schema,
-      dados: reg || { data_inicio: Utils.hoje(), situacao: 'Pendente' },
+      dados: reg || opcoes.dadosIniciais || { data_inicio: Utils.hoje(), situacao: 'Pendente' },
+      onRender: (box) => {
+        const form = box.querySelector('#dynForm');
+        this._ligarCriarTarefaInline(form, schema, (snapshot) => {
+          if (reg) this.abrirFormTarefaEtapa(etapa, Object.assign({}, reg, snapshot));
+          else this.abrirFormTarefaEtapa(etapa, null, { dadosIniciais: snapshot });
+        });
+      },
       onSalvar: async (dados) => {
         if (reg) await Api.atualizar('etapa_tarefas', reg.id, dados);
         else await Api.criar('etapa_tarefas', Object.assign({ etapa_id: etapa.id }, dados));
@@ -368,6 +378,34 @@ const Empreendimentos = {
         Utils.toast('Tarefa excluída.');
         App.refresh();
       } : null
+    });
+  },
+
+  // Liga o "+ Nova tarefa..." no fim do <select> de Tarefa de um formulário já aberto: ao
+  // escolher essa opção, guarda o que o usuário já preenchia nesse formulário, abre o cadastro
+  // rápido de Tarefa (mesmo cadastro de Cadastros > Tarefas) e, ao salvar, chama
+  // reabrirCom(snapshotComNovaTarefa) pra reabrir o formulário de origem já com a tarefa nova
+  // selecionada. Cancelando a criação, reabre do mesmo jeito mas sem trocar a tarefa — nos dois
+  // casos o resto do que o usuário já tinha preenchido (data, observação etc.) é preservado.
+  _ligarCriarTarefaInline(form, schema, reabrirCom) {
+    const sel = form.querySelector('[name="tarefa_id"]');
+    if (!sel || sel.querySelector('option[value="__nova__"]')) return;
+    sel.insertAdjacentHTML('beforeend', '<option value="__nova__">+ Nova tarefa...</option>');
+    sel.addEventListener('change', () => {
+      if (sel.value !== '__nova__') return;
+      const fd = new FormData(form);
+      const snapshot = {};
+      schema.forEach(f => {
+        if (f.type === 'number') { const v = fd.get(f.key); snapshot[f.key] = v === '' ? null : Number(v); }
+        else if (f.type === 'date' || f.type === 'select') { const v = fd.get(f.key); snapshot[f.key] = v === '' ? null : v; }
+        else snapshot[f.key] = fd.get(f.key) || '';
+      });
+      const tarefaAnterior = snapshot.tarefa_id;
+      delete snapshot.tarefa_id;
+      Cadastros._abrirFormListaSimples('tarefas', 'Tarefa', null, {
+        onCriado: (novaTarefa) => reabrirCom(Object.assign({}, snapshot, { tarefa_id: novaTarefa.id })),
+        onCancelado: () => reabrirCom(Object.assign({}, snapshot, { tarefa_id: tarefaAnterior && tarefaAnterior !== '__nova__' ? tarefaAnterior : null }))
+      });
     });
   },
 
@@ -472,6 +510,11 @@ const Empreendimentos = {
         }
         if (grupoValor) grupoValor.parentNode.insertBefore(secao, grupoValor);
         else form.appendChild(secao);
+
+        this._ligarCriarTarefaInline(form, schema, (snapshot) => {
+          if (reg) this.abrirFormCusto(emp, etapa, Object.assign({}, reg, snapshot), opcoes);
+          else this.abrirFormCusto(emp, etapa, null, Object.assign({}, opcoes, { dadosIniciais: snapshot, itensDraft }));
+        });
 
         const capturarDadosAtuais = () => {
           const fd = new FormData(form);
