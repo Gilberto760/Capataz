@@ -13,32 +13,70 @@ const Compras = {
   categoriasProduto: ['Medicamentos', 'Vacinas', 'Vermífugos', 'Nutrição', 'Ferramentas', 'Equipamentos', 'Peças', 'Combustíveis', 'Lubrificantes', 'Agricultura', 'Alimento', 'Serviços', 'Diversos'],
   tiposDocumentoCompra: ['Nota Fiscal', 'Recibo', 'Cupom Fiscal', 'Outro'],
 
-  // Total combinado Compras + Despesas (mês e ano atuais), usado no resumo das 4 abas do
-  // Financeiro — dá pra ver o gasto total de qualquer uma delas, não só da aba aberta.
-  // Despesas "Planejado"/"Cancelado" ficam de fora, mesma regra de sempre: ainda não viraram
-  // gasto de verdade.
-  totaisComprasDespesas() {
-    const hoje = Utils.hoje();
-    const mesAtual = hoje.slice(0, 7);
-    const anoAtual = hoje.slice(0, 4);
-    const compras = Api.list('compras');
-    const despesas = Api.list('despesas').filter(d => d.status !== 'Planejado' && d.status !== 'Cancelado');
-    const somaNoPeriodo = (lista, campoData, campoValor, tamanhoPeriodo) =>
-      lista.filter(r => (r[campoData] || '').slice(0, tamanhoPeriodo) === hoje.slice(0, tamanhoPeriodo))
-        .reduce((s, r) => s + Number(r[campoValor] || 0), 0);
-    const comprasMes = somaNoPeriodo(compras, 'data', 'valor_total', 7);
-    const comprasAno = somaNoPeriodo(compras, 'data', 'valor_total', 4);
-    const despesasMes = somaNoPeriodo(despesas, 'data', 'valor', 7);
-    const despesasAno = somaNoPeriodo(despesas, 'data', 'valor', 4);
-    return { mes: comprasMes + despesasMes, ano: comprasAno + despesasAno };
+  // Soma um campo de valor de uma tabela num período: {ano:'YYYY'} soma o ano inteiro,
+  // {mes:'YYYY-MM'} soma só aquele mês, e sem nenhum dos dois soma tudo (todos os anos).
+  // filtroExtra é um predicado opcional aplicado antes (ex: excluir despesas Planejado/Cancelado).
+  _somaPeriodo(tabela, campoData, campoValor, { ano, mes, filtroExtra } = {}) {
+    let lista = Api.list(tabela);
+    if (filtroExtra) lista = lista.filter(filtroExtra);
+    if (mes) lista = lista.filter(r => (r[campoData] || '').slice(0, 7) === mes);
+    else if (ano) lista = lista.filter(r => (r[campoData] || '').slice(0, 4) === ano);
+    return lista.reduce((s, r) => s + Number(r[campoValor] || 0), 0);
   },
-  // HTML dos dois cartões "Compras + Despesas" (mês/ano) pra juntar com o total específico de
-  // cada aba dentro de um summary-box com grid-3col.
-  _colunasComprasDespesas() {
-    const { mes, ano } = this.totaisComprasDespesas();
+  // Receita (Produção + Vendas) e Despesa (Compras + Despesas) de um período — ano específico
+  // ('YYYY') ou, sem passar nada, de todos os anos juntos. Despesas "Planejado"/"Cancelado"
+  // ficam de fora, mesma regra de sempre: ainda não viraram gasto de verdade.
+  _resumoReceitaDespesa(ano) {
+    const filtroExecutada = d => d.status !== 'Planejado' && d.status !== 'Cancelado';
+    const producao = this._somaPeriodo('producao', 'data', 'valor_total', { ano });
+    const vendas = this._somaPeriodo('vendas', 'data_venda', 'valor_total', { ano });
+    const compras = this._somaPeriodo('compras', 'data', 'valor_total', { ano });
+    const despesas = this._somaPeriodo('despesas', 'data', 'valor', { ano, filtroExtra: filtroExecutada });
+    const receita = producao + vendas;
+    const despesa = compras + despesas;
+    return { receita, despesa, resultado: receita - despesa };
+  },
+  // Resumo financeiro usado no topo das 4 abas do Financeiro (Compras/Despesas/Produção/Vendas):
+  // uma linha fixa com o ano atual (mês + ano) e outra reagindo ao filtro de ano da tela
+  // (um ano específico, ou "todos os anos" quando nenhum está selecionado) — cada linha traz o
+  // total específico da aba (opts.labelMetrica/tabela/campoData/campoValor) junto com
+  // Receitas/Despesas/Resultado gerais, pra servir de resumo financeiro completo em qualquer tela.
+  _resumoFinanceiroHtml(opts) {
+    const { labelMetrica, tabela, campoData, campoValor, filtroAno } = opts;
+    const hoje = Utils.hoje();
+    const anoAtual = hoje.slice(0, 4);
+    const mesAtual = hoje.slice(0, 7);
+    const corResultado = (v) => `color:${v >= 0 ? 'var(--green-700)' : 'var(--red-700,#c0392b)'}`;
+
+    const metricaMesAtual = this._somaPeriodo(tabela, campoData, campoValor, { mes: mesAtual });
+    const metricaAnoAtual = this._somaPeriodo(tabela, campoData, campoValor, { ano: anoAtual });
+    const resumoAnoAtual = this._resumoReceitaDespesa(anoAtual);
+
+    const anoSelecionado = filtroAno && filtroAno !== 'todos' ? filtroAno : null;
+    const labelPeriodoSelecionado = anoSelecionado ? `Ano ${anoSelecionado}` : 'Todos os anos';
+    const metricaSelecionada = this._somaPeriodo(tabela, campoData, campoValor, { ano: anoSelecionado });
+    const resumoSelecionado = this._resumoReceitaDespesa(anoSelecionado);
+
+    const linha = (titulo, metricaHtml, resumo) => `
+      <div style="flex:1;min-width:230px;">
+        <div style="font-weight:700;margin-bottom:4px;">${Utils.escapeHtml(titulo)}</div>
+        <div class="hint" style="margin-bottom:6px;">${metricaHtml}</div>
+        <div class="rec-row" style="gap:10px;flex-wrap:wrap;">
+          <span>Receitas: <b>${Utils.fmtMoeda(resumo.receita)}</b></span>
+          <span>Despesas: <b>${Utils.fmtMoeda(resumo.despesa)}</b></span>
+          <span>Resultado: <b style="${corResultado(resumo.resultado)}">${Utils.fmtMoeda(resumo.resultado)}</b></span>
+        </div>
+      </div>`;
+
     return `
-      <span>Total Compras + Despesas no mês: <b>${Utils.fmtMoeda(mes)}</b></span>
-      <span>Total Compras + Despesas no ano: <b>${Utils.fmtMoeda(ano)}</b></span>`;
+      <div class="summary-box" style="display:flex;gap:20px;flex-wrap:wrap;">
+        ${linha(`Ano atual (${anoAtual})`,
+          `${Utils.escapeHtml(labelMetrica)} no mês: <b>${Utils.fmtMoeda(metricaMesAtual)}</b> · no ano: <b>${Utils.fmtMoeda(metricaAnoAtual)}</b>`,
+          resumoAnoAtual)}
+        ${linha(labelPeriodoSelecionado,
+          `${Utils.escapeHtml(labelMetrica)}: <b>${Utils.fmtMoeda(metricaSelecionada)}</b>`,
+          resumoSelecionado)}
+      </div>`;
   },
 
   // Guarda quais grupos (Ano/Fazenda/Categoria) estão abertos em cada tela, fora da função de
@@ -285,18 +323,12 @@ const Compras = {
   /* ---------- COMPRAS ---------- */
   renderCompras(container) {
     const todos = Api.list('compras');
-    const mesAtual = Utils.hoje().slice(0, 7);
-    const totalMes = todos.filter(r => (r.data || '').slice(0, 7) === mesAtual).reduce((s, r) => s + Number(r.valor_total || 0), 0);
-
     const anos = Array.from(new Set(todos.map(r => (r.data || '').slice(0, 4)).filter(Boolean))).sort((a, b) => b.localeCompare(a));
 
     const estado = this._estadoGrupo('compras');
 
     container.innerHTML = `
-      <div class="summary-box grid-3col">
-        <span>Total comprado no mês: <b>${Utils.fmtMoeda(totalMes)}</b></span>
-        ${this._colunasComprasDespesas()}
-      </div>
+      ${this._resumoFinanceiroHtml({ labelMetrica: 'Total comprado', tabela: 'compras', campoData: 'data', campoValor: 'valor_total', filtroAno: estado.filtroAno })}
       <div class="toolbar"><div></div><button class="btn btn-primary" id="btnNovaCompra">+ Nova compra</button></div>
       <div class="filter-chips" id="filtroAnoCompra">
         <button class="chip ${estado.filtroAno === 'todos' ? 'active' : ''}" data-ano="todos">Todos os anos</button>
@@ -416,10 +448,10 @@ const Compras = {
 
     container.querySelectorAll('#filtroAnoCompra .chip').forEach(chip => {
       chip.addEventListener('click', () => {
-        container.querySelectorAll('#filtroAnoCompra .chip').forEach(c => c.classList.remove('active'));
-        chip.classList.add('active');
         estado.filtroAno = chip.dataset.ano;
-        desenhar();
+        // Re-renderiza a tela inteira (não só a lista) — o resumo financeiro no topo também
+        // reage ao ano selecionado no filtro.
+        this.renderCompras(container);
       });
     });
 
@@ -736,18 +768,26 @@ const Compras = {
     // Custos "Planejado" (vindos de uma planilha de custeio importada numa Atividade, ainda não
     // confirmados) e "Cancelado" não entram aqui — só aparecem no Financeiro depois que o
     // usuário confere e confirma que foram feitos de verdade.
-    const todos = Api.list('despesas').filter(d => d.status !== 'Planejado' && d.status !== 'Cancelado');
-    const mesAtual = Utils.hoje().slice(0, 7);
-    const totalMes = todos.filter(r => (r.data || '').slice(0, 7) === mesAtual).reduce((s, r) => s + Number(r.valor || 0), 0);
+    const todosOsAnos = Api.list('despesas').filter(d => d.status !== 'Planejado' && d.status !== 'Cancelado');
+    const anos = Array.from(new Set(todosOsAnos.map(r => (r.data || '').slice(0, 4)).filter(Boolean))).sort((a, b) => b.localeCompare(a));
+    const estado = this._estadoGrupo('despesas');
+    const todos = estado.filtroAno === 'todos' ? todosOsAnos : todosOsAnos.filter(r => (r.data || '').slice(0, 4) === estado.filtroAno);
 
     container.innerHTML = `
-      <div class="summary-box grid-3col">
-        <span>Total de despesas no mês: <b>${Utils.fmtMoeda(totalMes)}</b></span>
-        ${this._colunasComprasDespesas()}
-      </div>
+      ${this._resumoFinanceiroHtml({ labelMetrica: 'Total de despesas', tabela: 'despesas', campoData: 'data', campoValor: 'valor', filtroAno: estado.filtroAno })}
       <div class="toolbar"><div></div><button class="btn btn-primary" id="btnNovaDespesa">+ Nova despesa</button></div>
+      <div class="filter-chips" id="filtroAnoDespesas">
+        <button class="chip ${estado.filtroAno === 'todos' ? 'active' : ''}" data-ano="todos">Todos os anos</button>
+        ${anos.map(a => `<button class="chip ${estado.filtroAno === a ? 'active' : ''}" data-ano="${a}">${a}</button>`).join('')}
+      </div>
       <div id="listaDespesas"></div>`;
     container.querySelector('#btnNovaDespesa').addEventListener('click', () => this.abrirFormDespesa(null));
+    container.querySelectorAll('#filtroAnoDespesas .chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        estado.filtroAno = chip.dataset.ano;
+        this.renderDespesas(container);
+      });
+    });
 
     const raiz = container.querySelector('#listaDespesas');
     if (!todos.length) {
@@ -878,18 +918,26 @@ const Compras = {
   },
 
   renderProducao(container) {
-    const todos = Api.list('producao');
-    const anoAtual = Utils.hoje().slice(0, 4);
-    const totalAno = todos.filter(r => (r.data || '').slice(0, 4) === anoAtual).reduce((s, r) => s + Number(r.valor_total || 0), 0);
+    const todosOsAnos = Api.list('producao');
+    const anos = Array.from(new Set(todosOsAnos.map(r => (r.data || '').slice(0, 4)).filter(Boolean))).sort((a, b) => b.localeCompare(a));
+    const estado = this._estadoGrupo('producao');
+    const todos = estado.filtroAno === 'todos' ? todosOsAnos : todosOsAnos.filter(r => (r.data || '').slice(0, 4) === estado.filtroAno);
 
     container.innerHTML = `
-      <div class="summary-box grid-3col">
-        <span>Total vendido no ano: <b>${Utils.fmtMoeda(totalAno)}</b></span>
-        ${this._colunasComprasDespesas()}
-      </div>
+      ${this._resumoFinanceiroHtml({ labelMetrica: 'Total produzido', tabela: 'producao', campoData: 'data', campoValor: 'valor_total', filtroAno: estado.filtroAno })}
       <div class="toolbar"><div></div><button class="btn btn-primary" id="btnNovaProducao">+ Nova venda de produção</button></div>
+      <div class="filter-chips" id="filtroAnoProducao">
+        <button class="chip ${estado.filtroAno === 'todos' ? 'active' : ''}" data-ano="todos">Todos os anos</button>
+        ${anos.map(a => `<button class="chip ${estado.filtroAno === a ? 'active' : ''}" data-ano="${a}">${a}</button>`).join('')}
+      </div>
       <div id="listaProducao"></div>`;
     container.querySelector('#btnNovaProducao').addEventListener('click', () => this.abrirFormProducao(null));
+    container.querySelectorAll('#filtroAnoProducao .chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        estado.filtroAno = chip.dataset.ano;
+        this.renderProducao(container);
+      });
+    });
 
     const raiz = container.querySelector('#listaProducao');
     if (!todos.length) {
@@ -984,18 +1032,26 @@ const Compras = {
   },
 
   renderVendas(container) {
-    const todos = Api.list('vendas');
-    const anoAtual = Utils.hoje().slice(0, 4);
-    const totalAno = todos.filter(r => (r.data_venda || '').slice(0, 4) === anoAtual).reduce((s, r) => s + Number(r.valor_total || 0), 0);
+    const todosOsAnos = Api.list('vendas');
+    const anos = Array.from(new Set(todosOsAnos.map(r => (r.data_venda || '').slice(0, 4)).filter(Boolean))).sort((a, b) => b.localeCompare(a));
+    const estado = this._estadoGrupo('vendas');
+    const todos = estado.filtroAno === 'todos' ? todosOsAnos : todosOsAnos.filter(r => (r.data_venda || '').slice(0, 4) === estado.filtroAno);
 
     container.innerHTML = `
-      <div class="summary-box grid-3col">
-        <span>Total líquido vendido no ano: <b>${Utils.fmtMoeda(totalAno)}</b></span>
-        ${this._colunasComprasDespesas()}
-      </div>
+      ${this._resumoFinanceiroHtml({ labelMetrica: 'Total líquido vendido', tabela: 'vendas', campoData: 'data_venda', campoValor: 'valor_total', filtroAno: estado.filtroAno })}
       <div class="toolbar"><div></div><button class="btn btn-primary" id="btnNovaVenda">+ Nova venda</button></div>
+      <div class="filter-chips" id="filtroAnoVendas">
+        <button class="chip ${estado.filtroAno === 'todos' ? 'active' : ''}" data-ano="todos">Todos os anos</button>
+        ${anos.map(a => `<button class="chip ${estado.filtroAno === a ? 'active' : ''}" data-ano="${a}">${a}</button>`).join('')}
+      </div>
       <div id="listaVendas"></div>`;
     container.querySelector('#btnNovaVenda').addEventListener('click', () => this.abrirFormVenda(null));
+    container.querySelectorAll('#filtroAnoVendas .chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        estado.filtroAno = chip.dataset.ano;
+        this.renderVendas(container);
+      });
+    });
 
     const raiz = container.querySelector('#listaVendas');
     if (!todos.length) {
