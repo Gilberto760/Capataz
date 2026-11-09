@@ -315,7 +315,7 @@ const Empreendimentos = {
       UI.renderList(alvo, {
         data: tarefasDaEtapa,
         emptyText: 'Nenhuma tarefa lançada nessa etapa ainda.',
-        onCardClick: (t) => this.abrirFormTarefaEtapa(e, t),
+        onCardClick: (t) => this.abrirFormTarefaEtapa(emp, e, t),
         renderCard: (t) => `
           <div class="rec-title">${Utils.escapeHtml(nomeTarefa(t.tarefa_id))} ${UI.badge(t.situacao || 'Pendente', clsSituacaoTarefa[t.situacao] || 'orange')} ${t._pendente ? UI.badge('Pendente', 'orange') : ''}</div>
           <div class="rec-row"><span>${periodo(t)}</span>${nomeResponsavel(t.responsavel_id) ? `<span>${Utils.escapeHtml(nomeResponsavel(t.responsavel_id))}</span>` : ''}</div>`
@@ -339,14 +339,14 @@ const Empreendimentos = {
     raiz.querySelectorAll('[data-nova-tarefa-etapa]').forEach(btn => {
       btn.addEventListener('click', (ev) => {
         ev.stopPropagation();
-        this.abrirFormTarefaEtapa(etapas.find(e => e.id === btn.dataset.novaTarefaEtapa), null);
+        this.abrirFormTarefaEtapa(emp, etapas.find(e => e.id === btn.dataset.novaTarefaEtapa), null);
       });
     });
   },
 
   // opcoes.dadosIniciais: usado só quando reg é null, pra reabrir o formulário com o que o
   // usuário já tinha preenchido depois de criar uma tarefa nova pelo "+ Nova tarefa..." do select.
-  abrirFormTarefaEtapa(etapa, reg, opcoes) {
+  abrirFormTarefaEtapa(emp, etapa, reg, opcoes) {
     opcoes = opcoes || {};
     const schema = [
       { key: 'tarefa_id', label: 'Tarefa', type: 'select', required: true, optionsFrom: { fetch: () => Cadastros.tarefasConhecidas(), valueField: 'id', labelFn: t => t.nome } },
@@ -363,8 +363,32 @@ const Empreendimentos = {
       onRender: (box) => {
         const form = box.querySelector('#dynForm');
         this._ligarCriarTarefaInline(form, schema, (snapshot) => {
-          if (reg) this.abrirFormTarefaEtapa(etapa, Object.assign({}, reg, snapshot));
-          else this.abrirFormTarefaEtapa(etapa, null, { dadosIniciais: snapshot });
+          if (reg) this.abrirFormTarefaEtapa(emp, etapa, Object.assign({}, reg, snapshot));
+          else this.abrirFormTarefaEtapa(emp, etapa, null, { dadosIniciais: snapshot });
+        });
+
+        // Atalho: a tarefa costuma ser "comprar tal coisa" — em vez de o usuário ter que ir em
+        // Financeiro > Compras e preencher etapa/tarefa na mão, abre a Nova compra já vinculada
+        // a essa etapa/tarefa/atividade, preservando o que já foi digitado aqui.
+        const btnCompra = document.createElement('button');
+        btnCompra.type = 'button';
+        btnCompra.className = 'btn btn-ghost';
+        btnCompra.style.cssText = 'width:100%;margin-top:4px;';
+        btnCompra.textContent = '🛒 Lançar compra desta tarefa';
+        form.appendChild(btnCompra);
+        btnCompra.addEventListener('click', () => {
+          const fd = new FormData(form);
+          const snapshot = {};
+          schema.forEach(f => {
+            if (f.type === 'number') { const v = fd.get(f.key); snapshot[f.key] = v === '' ? null : Number(v); }
+            else if (f.type === 'date' || f.type === 'select') { const v = fd.get(f.key); snapshot[f.key] = v === '' ? null : v; }
+            else snapshot[f.key] = fd.get(f.key) || '';
+          });
+          const etapas = Api.list('empreendimento_etapas').filter(e2 => e2.empreendimento_id === emp.id);
+          Compras.abrirFormCompra(null, {
+            vinculo: { etapas, etapaId: etapa.id, fazenda: emp.fazenda, empreendimentoId: emp.id },
+            dadosIniciais: Object.assign({ data: Utils.hoje(), tipo: 'Nota Fiscal', considerar_saida: true, irpf: true, frete: 0, desconto: 0, fazenda: emp.fazenda, etapa_id: etapa.id }, snapshot.tarefa_id && snapshot.tarefa_id !== '__nova__' ? { tarefa_id: snapshot.tarefa_id } : {})
+          });
         });
       },
       onSalvar: async (dados) => {

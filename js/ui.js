@@ -142,7 +142,23 @@ const UI = {
         const valueField = campo.optionsFrom.valueField || 'id';
         opts = rows.map(r => ({ value: campo.optionsFrom.fetch ? r[valueField] : r.id, label: campo.optionsFrom.labelFn(r) }));
       }
-      this._initSelectCombo(wrap, opts);
+      this._initSelectCombo(wrap, opts, campo.criarNovo);
+    });
+    // Liga o "+ Novo..." nos <select> simples que pedirem (campo.criarNovo) — combobox com
+    // busca já trata isso dentro do _initSelectCombo acima.
+    schema.filter(f => f.type === 'select' && !f.busca && f.criarNovo).forEach(f => {
+      const sel = box.querySelector(`select[name="${f.key}"]`);
+      if (!sel) return;
+      const valorAnterior = sel.value;
+      const optNovo = document.createElement('option');
+      optNovo.value = '__criar_novo__';
+      optNovo.textContent = '+ ' + f.criarNovo.label;
+      sel.appendChild(optNovo);
+      sel.addEventListener('change', () => {
+        if (sel.value !== '__criar_novo__') return;
+        sel.value = valorAnterior;
+        f.criarNovo.abrir();
+      });
     });
     // Clicar em qualquer lugar do formulário fora de um combobox fecha as listas abertas
     box.addEventListener('click', () => {
@@ -271,7 +287,7 @@ const UI = {
      qualquer trecho do nome (não só pelo começo), clicar numa opção grava o id no campo oculto
      e mostra o nome no campo de texto. Se o campo perder foco sem bater com nenhuma opção,
      volta pro que estava selecionado antes (ou limpa). */
-  _initSelectCombo(wrap, opts) {
+  _initSelectCombo(wrap, opts, criarNovo) {
     const hidden = wrap.querySelector('input[type="hidden"]');
     const input = wrap.querySelector('.combo-input');
     const arrow = wrap.querySelector('.combo-arrow');
@@ -281,9 +297,10 @@ const UI = {
     const desenharLista = (filtro) => {
       const termo = (filtro || '').toLowerCase();
       const itens = wrap._opts.filter(o => !termo || o.label.toLowerCase().includes(termo));
-      list.innerHTML = itens.length
+      list.innerHTML = (itens.length
         ? itens.map(o => `<div class="combo-item" data-value="${Utils.escapeHtml(o.value)}">${Utils.escapeHtml(o.label)}</div>`).join('')
-        : `<div class="combo-item combo-empty">Nenhuma opção</div>`;
+        : `<div class="combo-item combo-empty">Nenhuma opção</div>`)
+        + (criarNovo ? `<div class="combo-item combo-criar-novo">+ ${Utils.escapeHtml(criarNovo.label)}</div>` : '');
     };
 
     const abrirCompleta = () => { desenharLista(''); list.hidden = false; };
@@ -297,6 +314,11 @@ const UI = {
     input.addEventListener('click', (e) => { e.stopPropagation(); if (list.hidden) abrirCompleta(); });
     input.addEventListener('input', () => { desenharLista(input.value); list.hidden = false; });
     list.addEventListener('click', (e) => {
+      if (e.target.closest('.combo-criar-novo')) {
+        list.hidden = true;
+        criarNovo.abrir();
+        return;
+      }
       const item = e.target.closest('.combo-item:not(.combo-empty)');
       if (!item) return;
       hidden.value = item.dataset.value;

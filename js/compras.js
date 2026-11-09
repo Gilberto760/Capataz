@@ -524,9 +524,30 @@ const Compras = {
 
   // draft (só quando a compra ainda não existe): { lista, onMudou } — em vez de salvar o item
   // direto no banco, guarda num array local até a compra inteira ser salva.
-  abrirFormItem(item, compra, draft) {
+  // opcoes.dadosIniciais: usado só quando item é null, pra reabrir o formulário com o que o
+  // usuário já tinha preenchido depois de criar um produto novo pelo "+ Novo produto..." do select.
+  abrirFormItem(item, compra, draft, opcoes) {
+    opcoes = opcoes || {};
     const schema = [
-      { key: 'produto_id', label: 'Produto', type: 'select', busca: true, required: true, optionsFrom: { fetch: () => Api.list('produtos').sort((a, b) => (a.nome || '').localeCompare(b.nome || '')), valueField: 'id', labelFn: p => p.nome } },
+      { key: 'produto_id', label: 'Produto', type: 'select', busca: true, required: true, optionsFrom: { fetch: () => Api.list('produtos').sort((a, b) => (a.nome || '').localeCompare(b.nome || '')), valueField: 'id', labelFn: p => p.nome },
+        criarNovo: { label: 'Novo produto...', abrir: () => {
+          const form = document.getElementById('dynForm');
+          const fd = new FormData(form);
+          const snapshot = {};
+          schema.forEach(f => {
+            if (f.type === 'number') { const v = fd.get(f.key); snapshot[f.key] = v === '' ? null : Number(v); }
+            else snapshot[f.key] = fd.get(f.key) || '';
+          });
+          delete snapshot.produto_id;
+          const reabrir = (dadosFinal) => {
+            if (item) this.abrirFormItem(Object.assign({}, item, dadosFinal), compra, draft);
+            else this.abrirFormItem(null, compra, draft, { dadosIniciais: dadosFinal });
+          };
+          this.abrirFormProduto(null, {
+            onCriado: (novoProduto) => reabrir(Object.assign({}, snapshot, { produto_id: novoProduto.id })),
+            onCancelado: () => reabrir(snapshot)
+          });
+        } } },
       { key: 'unidade', label: 'Unidade', type: 'text', suggestions: ['kg', 'g', 'Litro', 'un', 'Saco 60 Kg', 'Tonelada', 'Arroba', 'Cabeça', 'Caixa', 'Pacote', 'Rolo', 'Metro'] },
       { key: 'quantidade', label: 'Quantidade', type: 'number', step: '0.01', required: true },
       { key: 'valor_unitario', label: 'Valor unitário (R$)', type: 'number', step: '0.01', required: true }
@@ -534,7 +555,7 @@ const Compras = {
     UI.abrirFormulario({
       titulo: item ? 'Editar item' : 'Novo item da compra',
       schema,
-      dados: item || { quantidade: 1 },
+      dados: item || opcoes.dadosIniciais || { quantidade: 1 },
       onSalvar: async (dados) => {
         if (draft) {
           if (item) Object.assign(item, dados);
@@ -635,7 +656,11 @@ const Compras = {
     });
   },
 
-  abrirFormProduto(reg) {
+  // opcoes.onCriado(novoProduto)/opcoes.onCancelado(): usados quando o cadastro é aberto "por
+  // dentro" de outro formulário (ex: "+ Novo produto..." dentro de Novo item da compra), pra
+  // poder reabrir o formulário de origem já com o produto novo selecionado.
+  abrirFormProduto(reg, opcoes) {
+    opcoes = opcoes || {};
     const schema = [
       { key: 'nome', label: 'Nome do produto', type: 'text', required: true },
       { key: 'categoria', label: 'Categoria', type: 'text', suggestions: this.categoriasProduto },
@@ -646,10 +671,15 @@ const Compras = {
       schema,
       dados: reg || {},
       onSalvar: async (dados) => {
-        if (reg) await Api.atualizar('produtos', reg.id, dados);
-        else await Api.criar('produtos', dados);
-        Utils.toast('Produto salvo.');
-        App.refresh();
+        if (reg) {
+          await Api.atualizar('produtos', reg.id, dados);
+          Utils.toast('Produto salvo.');
+          App.refresh();
+        } else {
+          const novo = await Api.criar('produtos', dados);
+          Utils.toast('Produto salvo.');
+          if (opcoes.onCriado) opcoes.onCriado(novo); else App.refresh();
+        }
       },
       onExcluir: reg ? async () => {
         const emUso = Api.list('itens_compra').some(i => i.produto_id === reg.id);
@@ -657,7 +687,8 @@ const Compras = {
         await Api.excluir('produtos', reg.id);
         Utils.toast('Produto excluído.');
         App.refresh();
-      } : null
+      } : null,
+      onCancelar: (!reg && opcoes.onCancelado) ? opcoes.onCancelado : undefined
     });
   },
 

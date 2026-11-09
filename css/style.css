@@ -310,6 +310,7 @@ body {
 .scanner-box video { width:100%; max-height:60vh; display:block; background:#000; object-fit:cover; }
 .scanner-status { color:#fff; text-align:center; font-size:13px; padding:10px 14px 16px; }
 .combo-item.combo-empty:hover { background:none; }
+.combo-item.combo-criar-novo { color: var(--green-700); font-weight:600; border-top:1px solid var(--border); }
 
 /* ---------- Histórico dentro da ficha do animal (parições/lactações) ---------- */
 .ficha-lista { border:1px solid var(--border); border-radius:10px; overflow:hidden; }
