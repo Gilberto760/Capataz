@@ -260,12 +260,19 @@ const Compras = {
     const mesAtual = Utils.hoje().slice(0, 7);
     const totalMes = todos.filter(r => (r.data || '').slice(0, 7) === mesAtual).reduce((s, r) => s + Number(r.valor_total || 0), 0);
 
+    // Despesas "Planejado"/"Cancelado" ficam de fora, mesma regra da aba Despesas — ainda não
+    // viraram gasto de verdade.
+    const despesasMes = Api.list('despesas')
+      .filter(d => d.status !== 'Planejado' && d.status !== 'Cancelado' && (d.data || '').slice(0, 7) === mesAtual)
+      .reduce((s, d) => s + Number(d.valor || 0), 0);
+    const totalMesCompraseDespesas = totalMes + despesasMes;
+
     const anos = Array.from(new Set(todos.map(r => (r.data || '').slice(0, 4)).filter(Boolean))).sort((a, b) => b.localeCompare(a));
 
     const estado = this._estadoGrupo('compras');
 
     container.innerHTML = `
-      <div class="summary-box">Total comprado no mês: <b>${Utils.fmtMoeda(totalMes)}</b></div>
+      <div class="summary-box">Total comprado no mês: <b>${Utils.fmtMoeda(totalMes)}</b><br/>Total Compras + Despesas no mês: <b>${Utils.fmtMoeda(totalMesCompraseDespesas)}</b></div>
       <div class="toolbar"><div></div><button class="btn btn-primary" id="btnNovaCompra">+ Nova compra</button></div>
       <div class="filter-chips" id="filtroAnoCompra">
         <button class="chip ${estado.filtroAno === 'todos' ? 'active' : ''}" data-ano="todos">Todos os anos</button>
