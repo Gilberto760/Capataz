@@ -303,9 +303,9 @@ const Compras = {
         return;
       }
 
-      // Agrupa por Ano, e dentro de cada ano por Centro de custo (Faturamento).
+      // Agrupa por Ano, e dentro de cada ano por Faturamento (fazenda).
       // Só mostra valores nos dois primeiros níveis; os detalhes de cada compra
-      // só aparecem quando o centro de custo é aberto (último nível).
+      // só aparecem quando o grupo de faturamento é aberto (último nível).
       const porAno = {};
       lista.forEach(r => {
         const ano = (r.data || '').slice(0, 4) || 'Sem data';
@@ -327,7 +327,7 @@ const Compras = {
         if (anoAberto) {
           const porCentro = {};
           doAno.forEach(r => {
-            const centro = r.fazenda || 'Sem centro de custo';
+            const centro = r.fazenda || 'Sem faturamento';
             (porCentro[centro] = porCentro[centro] || []).push(r);
           });
           const centrosOrdenados = Object.keys(porCentro).sort((a, b) => a.localeCompare(b));
@@ -338,7 +338,7 @@ const Compras = {
             const centroAberto = centrosAbertos.has(chave);
             let h = `
               <div class="rec-card" data-toggle-centro="${Utils.escapeHtml(chave)}" style="cursor:pointer;margin-left:16px;background:var(--bg);">
-                <div class="rec-title" style="font-size:13px;">${centroAberto ? '▾' : '▸'} Centro de custo: ${Utils.escapeHtml(centro)}</div>
+                <div class="rec-title" style="font-size:13px;">${centroAberto ? '▾' : '▸'} Faturamento: ${Utils.escapeHtml(centro)}</div>
                 <div class="rec-row"><span>${doCentro.length} compra(s)</span><span><b>${Utils.fmtMoeda(totalCentro)}</b></span></div>
               </div>`;
             if (centroAberto) {
