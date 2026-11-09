@@ -285,16 +285,27 @@ const Empreendimentos = {
       return;
     }
 
+    // compras.tarefa_id aponta pro CADASTRO de tarefa (tipo de trabalho, ex: "Adquirir Cerca
+    // Elétrica"), o mesmo que etapa_tarefas.tarefa_id — não pro id da linha etapa_tarefas em si.
+    // Por isso, pra achar as compras de UMA tarefa específica dentro de uma etapa, tem que bater
+    // etapa_id (a etapa) + tarefa_id (o tipo) ao mesmo tempo.
+    const comprasDaEtapa = (etapaId) => Api.list('compras').filter(c => c.etapa_id === etapaId);
+    const comprasDaTarefa = (etapaId, tarefaTipoId) => Api.list('compras')
+      .filter(c => c.etapa_id === etapaId && c.tarefa_id === tarefaTipoId)
+      .sort((a, b) => (b.data || '').localeCompare(a.data || ''));
+    const totalCompras = (lista) => lista.reduce((s, c) => s + Number(c.valor_total || 0), 0);
+
     raiz.innerHTML = etapas.map(e => {
       const aberta = this._etapasAbertas.has(e.id);
       const tarefasDaEtapa = Api.list('etapa_tarefas').filter(t => t.etapa_id === e.id);
+      const totalComprasEtapa = totalCompras(comprasDaEtapa(e.id));
       let html = `
         <div class="rec-card" data-toggle-etapa="${e.id}" style="cursor:pointer;">
           <div class="rec-title">
             ${aberta ? '▾' : '▸'} ${Utils.escapeHtml(e.nome)} ${UI.badge(e.situacao || 'Pendente', clsSituacao[e.situacao] || 'orange')} ${e._pendente ? UI.badge('Pendente', 'orange') : ''}
             <button type="button" class="btn btn-ghost" data-editar-etapa="${e.id}" style="float:right;padding:2px 8px;">✏️</button>
           </div>
-          <div class="rec-row"><span>${e.data ? Utils.fmtData(e.data) : 'Sem data'}</span><span>${tarefasDaEtapa.length} tarefa(s)</span></div>
+          <div class="rec-row"><span>${e.data ? Utils.fmtData(e.data) : 'Sem data'}</span><span>${tarefasDaEtapa.length} tarefa(s)</span>${totalComprasEtapa ? `<span>🛒 ${Utils.fmtMoeda(totalComprasEtapa)}</span>` : ''}</div>
           ${e.observacao ? `<div class="rec-sub">${Utils.escapeHtml(e.observacao)}</div>` : ''}
         </div>`;
       if (aberta) {
@@ -316,9 +327,25 @@ const Empreendimentos = {
         data: tarefasDaEtapa,
         emptyText: 'Nenhuma tarefa lançada nessa etapa ainda.',
         onCardClick: (t) => this.abrirFormTarefaEtapa(emp, e, t),
-        renderCard: (t) => `
+        renderCard: (t) => {
+          const compras = comprasDaTarefa(e.id, t.tarefa_id);
+          const totalComprasTarefa = totalCompras(compras);
+          return `
           <div class="rec-title">${Utils.escapeHtml(nomeTarefa(t.tarefa_id))} ${UI.badge(t.situacao || 'Pendente', clsSituacaoTarefa[t.situacao] || 'orange')} ${t._pendente ? UI.badge('Pendente', 'orange') : ''}</div>
-          <div class="rec-row"><span>${periodo(t)}</span>${nomeResponsavel(t.responsavel_id) ? `<span>${Utils.escapeHtml(nomeResponsavel(t.responsavel_id))}</span>` : ''}</div>`
+          <div class="rec-row"><span>${periodo(t)}</span>${nomeResponsavel(t.responsavel_id) ? `<span>${Utils.escapeHtml(nomeResponsavel(t.responsavel_id))}</span>` : ''}${totalComprasTarefa ? `<span>🛒 ${Utils.fmtMoeda(totalComprasTarefa)}</span>` : ''}</div>
+          ${compras.length ? `<div class="ficha-lista" data-stop style="margin-top:6px;">${compras.map(c => `
+            <div class="ficha-item" data-abrir-compra-tarefa="${c.id}" style="cursor:pointer;">
+              <span>🛒 ${Utils.escapeHtml(c.fornecedor_id ? this.nomeFornecedorCompra(c.fornecedor_id) : 'Compra')}</span>
+              <span>${c.data ? Utils.fmtData(c.data) : '-'}</span>
+              <span>${Utils.fmtMoeda(c.valor_total)}</span>
+            </div>`).join('')}</div>` : ''}`;
+        }
+      });
+      alvo.querySelectorAll('[data-abrir-compra-tarefa]').forEach(el => {
+        el.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          Compras.abrirFormCompra(Api.get('compras', el.dataset.abrirCompraTarefa), { vinculo: { empreendimentoId: emp.id, etapaId: e.id, etapas, fazenda: emp.fazenda } });
+        });
       });
     });
 
