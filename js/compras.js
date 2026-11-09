@@ -13,6 +13,34 @@ const Compras = {
   categoriasProduto: ['Medicamentos', 'Vacinas', 'Vermífugos', 'Nutrição', 'Ferramentas', 'Equipamentos', 'Peças', 'Combustíveis', 'Lubrificantes', 'Agricultura', 'Alimento', 'Serviços', 'Diversos'],
   tiposDocumentoCompra: ['Nota Fiscal', 'Recibo', 'Cupom Fiscal', 'Outro'],
 
+  // Total combinado Compras + Despesas (mês e ano atuais), usado no resumo das 4 abas do
+  // Financeiro — dá pra ver o gasto total de qualquer uma delas, não só da aba aberta.
+  // Despesas "Planejado"/"Cancelado" ficam de fora, mesma regra de sempre: ainda não viraram
+  // gasto de verdade.
+  totaisComprasDespesas() {
+    const hoje = Utils.hoje();
+    const mesAtual = hoje.slice(0, 7);
+    const anoAtual = hoje.slice(0, 4);
+    const compras = Api.list('compras');
+    const despesas = Api.list('despesas').filter(d => d.status !== 'Planejado' && d.status !== 'Cancelado');
+    const somaNoPeriodo = (lista, campoData, campoValor, tamanhoPeriodo) =>
+      lista.filter(r => (r[campoData] || '').slice(0, tamanhoPeriodo) === hoje.slice(0, tamanhoPeriodo))
+        .reduce((s, r) => s + Number(r[campoValor] || 0), 0);
+    const comprasMes = somaNoPeriodo(compras, 'data', 'valor_total', 7);
+    const comprasAno = somaNoPeriodo(compras, 'data', 'valor_total', 4);
+    const despesasMes = somaNoPeriodo(despesas, 'data', 'valor', 7);
+    const despesasAno = somaNoPeriodo(despesas, 'data', 'valor', 4);
+    return { mes: comprasMes + despesasMes, ano: comprasAno + despesasAno };
+  },
+  // HTML dos dois cartões "Compras + Despesas" (mês/ano) pra juntar com o total específico de
+  // cada aba dentro de um summary-box com grid-3col.
+  _colunasComprasDespesas() {
+    const { mes, ano } = this.totaisComprasDespesas();
+    return `
+      <span>Total Compras + Despesas no mês: <b>${Utils.fmtMoeda(mes)}</b></span>
+      <span>Total Compras + Despesas no ano: <b>${Utils.fmtMoeda(ano)}</b></span>`;
+  },
+
   // Guarda quais grupos (Ano/Fazenda/Categoria) estão abertos em cada tela, fora da função de
   // render — se ficasse dentro, toda vez que a tela redesenha (ex: depois de salvar um
   // formulário) o estado "lembrado" se perderia e a lista voltaria inteira fechada, dando a
@@ -260,17 +288,6 @@ const Compras = {
     const mesAtual = Utils.hoje().slice(0, 7);
     const totalMes = todos.filter(r => (r.data || '').slice(0, 7) === mesAtual).reduce((s, r) => s + Number(r.valor_total || 0), 0);
 
-    const anoAtual = mesAtual.slice(0, 4);
-    const totalAno = todos.filter(r => (r.data || '').slice(0, 4) === anoAtual).reduce((s, r) => s + Number(r.valor_total || 0), 0);
-
-    // Despesas "Planejado"/"Cancelado" ficam de fora, mesma regra da aba Despesas — ainda não
-    // viraram gasto de verdade.
-    const despesasExecutadas = Api.list('despesas').filter(d => d.status !== 'Planejado' && d.status !== 'Cancelado');
-    const despesasMes = despesasExecutadas.filter(d => (d.data || '').slice(0, 7) === mesAtual).reduce((s, d) => s + Number(d.valor || 0), 0);
-    const despesasAno = despesasExecutadas.filter(d => (d.data || '').slice(0, 4) === anoAtual).reduce((s, d) => s + Number(d.valor || 0), 0);
-    const totalMesCompraseDespesas = totalMes + despesasMes;
-    const totalAnoCompraseDespesas = totalAno + despesasAno;
-
     const anos = Array.from(new Set(todos.map(r => (r.data || '').slice(0, 4)).filter(Boolean))).sort((a, b) => b.localeCompare(a));
 
     const estado = this._estadoGrupo('compras');
@@ -278,8 +295,7 @@ const Compras = {
     container.innerHTML = `
       <div class="summary-box grid-3col">
         <span>Total comprado no mês: <b>${Utils.fmtMoeda(totalMes)}</b></span>
-        <span>Total Compras + Despesas no mês: <b>${Utils.fmtMoeda(totalMesCompraseDespesas)}</b></span>
-        <span>Total Compras + Despesas no ano: <b>${Utils.fmtMoeda(totalAnoCompraseDespesas)}</b></span>
+        ${this._colunasComprasDespesas()}
       </div>
       <div class="toolbar"><div></div><button class="btn btn-primary" id="btnNovaCompra">+ Nova compra</button></div>
       <div class="filter-chips" id="filtroAnoCompra">
@@ -725,7 +741,10 @@ const Compras = {
     const totalMes = todos.filter(r => (r.data || '').slice(0, 7) === mesAtual).reduce((s, r) => s + Number(r.valor || 0), 0);
 
     container.innerHTML = `
-      <div class="summary-box">Total de despesas no mês: <b>${Utils.fmtMoeda(totalMes)}</b></div>
+      <div class="summary-box grid-3col">
+        <span>Total de despesas no mês: <b>${Utils.fmtMoeda(totalMes)}</b></span>
+        ${this._colunasComprasDespesas()}
+      </div>
       <div class="toolbar"><div></div><button class="btn btn-primary" id="btnNovaDespesa">+ Nova despesa</button></div>
       <div id="listaDespesas"></div>`;
     container.querySelector('#btnNovaDespesa').addEventListener('click', () => this.abrirFormDespesa(null));
@@ -864,7 +883,10 @@ const Compras = {
     const totalAno = todos.filter(r => (r.data || '').slice(0, 4) === anoAtual).reduce((s, r) => s + Number(r.valor_total || 0), 0);
 
     container.innerHTML = `
-      <div class="summary-box">Total vendido no ano: <b>${Utils.fmtMoeda(totalAno)}</b></div>
+      <div class="summary-box grid-3col">
+        <span>Total vendido no ano: <b>${Utils.fmtMoeda(totalAno)}</b></span>
+        ${this._colunasComprasDespesas()}
+      </div>
       <div class="toolbar"><div></div><button class="btn btn-primary" id="btnNovaProducao">+ Nova venda de produção</button></div>
       <div id="listaProducao"></div>`;
     container.querySelector('#btnNovaProducao').addEventListener('click', () => this.abrirFormProducao(null));
@@ -967,7 +989,10 @@ const Compras = {
     const totalAno = todos.filter(r => (r.data_venda || '').slice(0, 4) === anoAtual).reduce((s, r) => s + Number(r.valor_total || 0), 0);
 
     container.innerHTML = `
-      <div class="summary-box">Total líquido vendido no ano: <b>${Utils.fmtMoeda(totalAno)}</b></div>
+      <div class="summary-box grid-3col">
+        <span>Total líquido vendido no ano: <b>${Utils.fmtMoeda(totalAno)}</b></span>
+        ${this._colunasComprasDespesas()}
+      </div>
       <div class="toolbar"><div></div><button class="btn btn-primary" id="btnNovaVenda">+ Nova venda</button></div>
       <div id="listaVendas"></div>`;
     container.querySelector('#btnNovaVenda').addEventListener('click', () => this.abrirFormVenda(null));

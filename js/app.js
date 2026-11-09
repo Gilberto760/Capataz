@@ -34,7 +34,19 @@ const App = {
     }
 
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js').catch(() => {});
+      // Registra e, se já havia um Service Worker ativo (não é o primeiro acesso), força a
+      // checagem por uma versão nova e recarrega a página sozinho assim que ela assumir —
+      // antes disso, uma versão nova só aparecia depois do usuário fechar/reabrir o app
+      // VÁRIAS vezes, porque o navegador podia demorar até 24h pra checar sw.js sozinho.
+      let jaRecarregou = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (jaRecarregou) return;
+        jaRecarregou = true;
+        window.location.reload();
+      });
+      navigator.serviceWorker.register('sw.js').then((reg) => {
+        reg.update().catch(() => {});
+      }).catch(() => {});
     }
   },
 
