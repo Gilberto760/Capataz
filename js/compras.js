@@ -276,10 +276,10 @@ const Compras = {
     const estado = this._estadoGrupo('compras');
 
     container.innerHTML = `
-      <div class="summary-box">
-        Total comprado no mês: <b>${Utils.fmtMoeda(totalMes)}</b><br/>
-        Total Compras + Despesas no mês: <b>${Utils.fmtMoeda(totalMesCompraseDespesas)}</b><br/>
-        Total Compras + Despesas no ano: <b>${Utils.fmtMoeda(totalAnoCompraseDespesas)}</b>
+      <div class="summary-box grid-3col">
+        <span>Total comprado no mês: <b>${Utils.fmtMoeda(totalMes)}</b></span>
+        <span>Total Compras + Despesas no mês: <b>${Utils.fmtMoeda(totalMesCompraseDespesas)}</b></span>
+        <span>Total Compras + Despesas no ano: <b>${Utils.fmtMoeda(totalAnoCompraseDespesas)}</b></span>
       </div>
       <div class="toolbar"><div></div><button class="btn btn-primary" id="btnNovaCompra">+ Nova compra</button></div>
       <div class="filter-chips" id="filtroAnoCompra">
