@@ -62,8 +62,8 @@ const Compras = {
         <div style="font-weight:700;margin-bottom:4px;">${Utils.escapeHtml(titulo)}</div>
         <div class="hint" style="margin-bottom:6px;">${metricaHtml}</div>
         <div class="rec-row" style="gap:10px;flex-wrap:wrap;">
-          <span>Receitas: <b>${Utils.fmtMoeda(resumo.receita)}</b></span>
-          <span>Despesas: <b>${Utils.fmtMoeda(resumo.despesa)}</b></span>
+          <span title="Produção + Vendas">Receitas (Produção+Vendas): <b>${Utils.fmtMoeda(resumo.receita)}</b></span>
+          <span title="Compras + Despesas">Despesas (Compras+Despesas): <b>${Utils.fmtMoeda(resumo.despesa)}</b></span>
           <span>Resultado: <b style="${corResultado(resumo.resultado)}">${Utils.fmtMoeda(resumo.resultado)}</b></span>
         </div>
       </div>`;
