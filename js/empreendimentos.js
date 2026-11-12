@@ -832,7 +832,10 @@ const Empreendimentos = {
         campoUnit.addEventListener('input', atualizarTotal);
       },
       onSalvar: async (dados) => {
-        dados.valor_total = Number(dados.quantidade || 0) * Number(dados.valor_unitario || 0);
+        // Mesma regra do form de Produção: não zera um total que já existia só porque o campo
+        // de preço ficou em branco nessa edição.
+        const recalculado = Number(dados.quantidade || 0) * Number(dados.valor_unitario || 0);
+        dados.valor_total = recalculado || (reg ? Number(reg.valor_total || 0) : 0);
         dados.atividade = emp.tipo;
         dados.fazenda = emp.fazenda;
         if (reg) await Api.atualizar('producao', reg.id, dados);

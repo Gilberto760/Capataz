@@ -2,7 +2,8 @@
 const Relatorios = {
   subtabs: [
     { key: 'rebanho', label: 'Rebanho' },
-    { key: 'compras', label: 'Compras' }
+    { key: 'compras', label: 'Compras' },
+    { key: 'financeiro', label: 'Financeiro' }
   ],
 
   render(container, sub) {
@@ -13,7 +14,8 @@ const Relatorios = {
     sub = sub || 'rebanho';
     const map = {
       rebanho: () => this.renderRebanho(container),
-      compras: () => this.renderCompras(container)
+      compras: () => this.renderCompras(container),
+      financeiro: () => this.renderFinanceiro(container)
     };
     (map[sub] || map.rebanho)();
   },
@@ -230,5 +232,141 @@ const Relatorios = {
     });
 
     desenhar();
+  },
+
+  /* ---------- Relatório: Financeiro (Receitas x Despesas, visão geral) ----------
+     Receita = Produção + Vendas; Despesa = Compras + Despesas (status Planejado/Cancelado
+     ficam de fora — ainda não viraram gasto de verdade). Mesmas contas já usadas no resumo
+     das 4 abas do Financeiro (Compras._resumoReceitaDespesa/_somaPeriodo), só que aqui dá
+     pra olhar qualquer ano (ou todos) com mais detalhe: por mês, por fazenda, por categoria. */
+  renderFinanceiro(container) {
+    const producao = Api.list('producao');
+    const vendas = Api.list('vendas');
+    const compras = Api.list('compras');
+    const despesas = Api.list('despesas').filter(d => d.status !== 'Planejado' && d.status !== 'Cancelado');
+
+    const anos = Array.from(new Set([
+      ...producao.map(r => (r.data || '').slice(0, 4)),
+      ...vendas.map(r => (r.data_venda || '').slice(0, 4)),
+      ...compras.map(r => (r.data || '').slice(0, 4)),
+      ...despesas.map(r => (r.data || '').slice(0, 4))
+    ].filter(Boolean))).sort((a, b) => b.localeCompare(a));
+
+    container.innerHTML = `
+      <div class="filter-chips" id="filtroAnoRelFin">
+        <button class="chip active" data-ano="todos">Todos os anos</button>
+        ${anos.map(a => `<button class="chip" data-ano="${a}">${a}</button>`).join('')}
+      </div>
+      <div id="corpoRelFin"></div>`;
+
+    let anoAtivo = 'todos';
+    const corpo = container.querySelector('#corpoRelFin');
+
+    const noPeriodo = (lista, campoData, ano) => ano === 'todos' ? lista : lista.filter(r => (r[campoData] || '').slice(0, 4) === ano);
+
+    const desenhar = () => {
+      const producaoP = noPeriodo(producao, 'data', anoAtivo);
+      const vendasP = noPeriodo(vendas, 'data_venda', anoAtivo);
+      const comprasP = noPeriodo(compras, 'data', anoAtivo);
+      const despesasP = noPeriodo(despesas, 'data', anoAtivo);
+
+      const receita = producaoP.reduce((s, r) => s + Number(r.valor_total || 0), 0) + vendasP.reduce((s, r) => s + Number(r.valor_total || 0), 0);
+      const despesa = comprasP.reduce((s, r) => s + Number(r.valor_total || 0), 0) + despesasP.reduce((s, r) => s + Number(r.valor || 0), 0);
+      const resultado = receita - despesa;
+      const margem = receita ? (resultado / receita * 100) : 0;
+
+      // Receita/Despesa por ano (sempre todos os anos conhecidos, pra ver a evolução — não
+      // muda com o filtro, que só afeta os cartões e os detalhamentos abaixo).
+      const receitaPorAno = {};
+      const despesaPorAno = {};
+      anos.forEach(a => { receitaPorAno[a] = 0; despesaPorAno[a] = 0; });
+      producao.forEach(r => { const a = (r.data || '').slice(0, 4); if (a in receitaPorAno) receitaPorAno[a] += Number(r.valor_total || 0); });
+      vendas.forEach(r => { const a = (r.data_venda || '').slice(0, 4); if (a in receitaPorAno) receitaPorAno[a] += Number(r.valor_total || 0); });
+      compras.forEach(r => { const a = (r.data || '').slice(0, 4); if (a in despesaPorAno) despesaPorAno[a] += Number(r.valor_total || 0); });
+      despesas.forEach(r => { const a = (r.data || '').slice(0, 4); if (a in despesaPorAno) despesaPorAno[a] += Number(r.valor || 0); });
+      const anosAsc = anos.slice().sort();
+
+      // Receita/Despesa por mês (últimos 12 meses corridos, independe do filtro de ano).
+      const meses = this.ultimosMeses(12);
+      const receitaPorMes = {}, despesaPorMes = {};
+      meses.forEach(m => { receitaPorMes[m] = 0; despesaPorMes[m] = 0; });
+      producao.forEach(r => { const m = (r.data || '').slice(0, 7); if (m in receitaPorMes) receitaPorMes[m] += Number(r.valor_total || 0); });
+      vendas.forEach(r => { const m = (r.data_venda || '').slice(0, 7); if (m in receitaPorMes) receitaPorMes[m] += Number(r.valor_total || 0); });
+      compras.forEach(r => { const m = (r.data || '').slice(0, 7); if (m in despesaPorMes) despesaPorMes[m] += Number(r.valor_total || 0); });
+      despesas.forEach(r => { const m = (r.data || '').slice(0, 7); if (m in despesaPorMes) despesaPorMes[m] += Number(r.valor || 0); });
+
+      // Despesa por categoria (categoria vem da Despesa; cada item de Compra usa a categoria
+      // do produto) e por fazenda (receita e despesa), já no período filtrado.
+      const produtos = Api.list('produtos');
+      const produtoById = {}; produtos.forEach(p => produtoById[p.id] = p);
+      const itensCompra = Api.list('itens_compra');
+      const idsComprasP = new Set(comprasP.map(c => c.id));
+      const porCategoria = {};
+      despesasP.forEach(d => { const c = d.categoria || 'Sem categoria'; porCategoria[c] = (porCategoria[c] || 0) + Number(d.valor || 0); });
+      itensCompra.filter(i => idsComprasP.has(i.compra_id)).forEach(i => {
+        const p = produtoById[i.produto_id];
+        const cat = (p && p.categoria) || 'Sem categoria';
+        porCategoria[cat] = (porCategoria[cat] || 0) + Number(i.quantidade || 0) * Number(i.valor_unitario || 0);
+      });
+      const topCategoriasDespesa = Object.entries(porCategoria).sort((a, b) => b[1] - a[1]).slice(0, 10);
+
+      const receitaPorFazenda = {}, despesaPorFazenda = {};
+      producaoP.forEach(r => { const f = r.fazenda || 'Sem fazenda'; receitaPorFazenda[f] = (receitaPorFazenda[f] || 0) + Number(r.valor_total || 0); });
+      vendasP.forEach(r => { const f = r.fazenda || 'Sem fazenda'; receitaPorFazenda[f] = (receitaPorFazenda[f] || 0) + Number(r.valor_total || 0); });
+      comprasP.forEach(r => { const f = r.fazenda || 'Sem fazenda'; despesaPorFazenda[f] = (despesaPorFazenda[f] || 0) + Number(r.valor_total || 0); });
+      despesasP.forEach(r => { const f = r.fazenda || 'Sem fazenda'; despesaPorFazenda[f] = (despesaPorFazenda[f] || 0) + Number(r.valor || 0); });
+
+      corpo.innerHTML = `
+        <div class="cards-grid">
+          <div class="stat-card"><div class="stat-label">Receita (${anoAtivo === 'todos' ? 'todos os anos' : anoAtivo})</div><div class="stat-value green">${Utils.fmtMoeda(receita)}</div></div>
+          <div class="stat-card"><div class="stat-label">Despesa (${anoAtivo === 'todos' ? 'todos os anos' : anoAtivo})</div><div class="stat-value red">${Utils.fmtMoeda(despesa)}</div></div>
+          <div class="stat-card"><div class="stat-label">Resultado</div><div class="stat-value" style="color:${resultado >= 0 ? 'var(--green-700)' : 'var(--red-700,#c0392b)'}">${Utils.fmtMoeda(resultado)}</div></div>
+          <div class="stat-card"><div class="stat-label">Margem</div><div class="stat-value">${Utils.fmtNum(margem, 1)}%</div></div>
+        </div>
+
+        ${anosAsc.length > 1 ? this.barChart('Receita por ano', anosAsc.map(a => [a, receitaPorAno[a]]), Utils.fmtMoeda) : ''}
+        ${anosAsc.length > 1 ? this.barChart('Despesa por ano', anosAsc.map(a => [a, despesaPorAno[a]]), Utils.fmtMoeda) : ''}
+        ${this.barChart('Receita por mês (últimos 12 meses)', meses.map(m => [this.labelMes(m), receitaPorMes[m]]), Utils.fmtMoeda)}
+        ${this.barChart('Despesa por mês (últimos 12 meses)', meses.map(m => [this.labelMes(m), despesaPorMes[m]]), Utils.fmtMoeda)}
+        ${this.barChart('Receita por fazenda', Object.entries(receitaPorFazenda).sort((a, b) => b[1] - a[1]), Utils.fmtMoeda)}
+        ${this.barChart('Despesa por fazenda', Object.entries(despesaPorFazenda).sort((a, b) => b[1] - a[1]), Utils.fmtMoeda)}
+        ${topCategoriasDespesa.length ? this.barChart('Despesa por categoria', topCategoriasDespesa, Utils.fmtMoeda) : ''}
+
+        <div class="toolbar"><div></div><button class="btn btn-ghost" id="btnExportarFinCsv">Exportar resumo financeiro (CSV)</button></div>
+      `;
+
+      corpo.querySelector('#btnExportarFinCsv').addEventListener('click', () => {
+        const linhas = [
+          ...producaoP.map(r => ({ data: r.data, tipo: 'Receita', origem: 'Produção', descricao: r.destinatario || '', fazenda: r.fazenda || '', valor: Number(r.valor_total || 0) })),
+          ...vendasP.map(r => ({ data: r.data_venda, tipo: 'Receita', origem: 'Vendas', descricao: r.comprador || '', fazenda: r.fazenda || '', valor: Number(r.valor_total || 0) })),
+          ...comprasP.map(r => ({ data: r.data, tipo: 'Despesa', origem: 'Compras', descricao: this.nomeFornecedorRel(r.fornecedor_id), fazenda: r.fazenda || '', valor: -Number(r.valor_total || 0) })),
+          ...despesasP.map(r => ({ data: r.data, tipo: 'Despesa', origem: 'Despesas', descricao: r.categoria || '', fazenda: r.fazenda || '', valor: -Number(r.valor || 0) }))
+        ].sort((a, b) => (a.data || '').localeCompare(b.data || ''));
+        const csv = Utils.csvDe(linhas, [
+          { label: 'Data', value: 'data' },
+          { label: 'Tipo', value: 'tipo' },
+          { label: 'Origem', value: 'origem' },
+          { label: 'Descrição', value: 'descricao' },
+          { label: 'Fazenda', value: 'fazenda' },
+          { label: 'Valor', value: 'valor' }
+        ]);
+        Utils.downloadArquivo(`relatorio_financeiro_${anoAtivo}.csv`, csv, 'text/csv');
+      });
+    };
+
+    container.querySelectorAll('#filtroAnoRelFin .chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        container.querySelectorAll('#filtroAnoRelFin .chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        anoAtivo = chip.dataset.ano;
+        desenhar();
+      });
+    });
+
+    desenhar();
+  },
+
+  nomeFornecedorRel(id) {
+    return Compras.nomeFornecedor(id);
   }
 };

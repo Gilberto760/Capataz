@@ -1003,7 +1003,11 @@ const Compras = {
         campoUnit.addEventListener('input', atualizarTotal);
       },
       onSalvar: async (dados) => {
-        dados.valor_total = Number(dados.quantidade || 0) * Number(dados.valor_unitario || 0);
+        // Se quantidade/valor unitário ficarem em branco (ex: editou só pra corrigir outro
+        // campo e esqueceu de preencher o preço), não pode zerar um valor total que já existia
+        // — só recalcula quando o resultado dá um número de verdade; senão mantém o de antes.
+        const recalculado = Number(dados.quantidade || 0) * Number(dados.valor_unitario || 0);
+        dados.valor_total = recalculado || (reg ? Number(reg.valor_total || 0) : 0);
         if (reg) await Api.atualizar('producao', reg.id, dados);
         else await Api.criar('producao', dados);
         Utils.toast('Venda de produção salva.');
