@@ -40,6 +40,12 @@ const Rebanho = {
   finalidadesAnimal: ['Corte', 'Leite', 'Reprodução', 'Trabalho', 'Outra'],
   motivosMovimentacao: ['Compra', 'Venda', 'Nascimento', 'Morte', 'Abate', 'Transferência entre fazendas', 'Doação', 'Outro'],
 
+  // Quais grupos/subgrupos da lista de Animais estão expandidos — fica fora da função de
+  // render (senão todo redesenho, ex: depois de salvar um formulário, voltaria com tudo
+  // fechado de novo). Começa tudo fechado: com centenas de animais, renderizar o card de
+  // cada um já na abertura da tela deixaria a lista pesada à toa.
+  _gruposAnimaisAbertos: { principais: new Set(), sub: new Set() },
+
   // Regra única usada em toda venda registrada fora do formulário de Animal (Movimentação,
   // importação de planilha da GTA): marca o animal como Vendido e, se for um(a) bezerro(a)
   // que ainda não tinha desmame registrado, assume o desmame na data da própria venda.
@@ -387,21 +393,35 @@ const Rebanho = {
         gruposPrincipais = especiesPresentes.map(esp => ({ titulo: esp, itens: grupos[esp], subgrupos: categoriasDe(esp, grupos[esp]) }));
       }
 
+      // Cada grupo/subgrupo é colapsável — com centenas de animais, deixar tudo sempre aberto
+      // (todos os cards renderizados de uma vez) deixaria a tela pesada; aqui só a lista do
+      // que estiver expandido é montada de verdade. As chaves levam o modo de agrupamento na
+      // frente pra não misturar o estado "aberto" de Espécie com o de Proprietário(a).
+      const principaisAbertos = this._gruposAnimaisAbertos.principais;
+      const subAbertos = this._gruposAnimaisAbertos.sub;
+      const chavePrincipal = (titulo) => `${agrupamento}|${titulo}`;
+      const chaveSub = (chavePai, subTitulo) => `${chavePai}||${subTitulo}`;
+
       raiz.innerHTML = gruposPrincipais.map((g, i) => {
+        const chaveG = chavePrincipal(g.titulo);
+        const aberto = principaisAbertos.has(chaveG);
+        let html = `<h3 class="section-title" data-toggle-grp="${Utils.escapeHtml(chaveG)}" style="cursor:pointer;">${aberto ? '▾' : '▸'} ${Utils.escapeHtml(g.titulo)} (${g.itens.length})</h3>`;
+        if (!aberto) return html;
         if (!g.subgrupos) {
-          return `
-            <h3 class="section-title">${Utils.escapeHtml(g.titulo)} (${g.itens.length})</h3>
-            <div id="grupoAnimal${i}"></div>`;
+          return html + `<div id="grupoAnimal${i}"></div>`;
         }
-        return `
-          <h3 class="section-title">${Utils.escapeHtml(g.titulo)} (${g.itens.length})</h3>
-          ${g.subgrupos.map((sg, j) => `
-            <h4 style="font-size:13px;font-weight:700;color:var(--text-muted);margin:10px 0 8px;">${Utils.escapeHtml(sg.titulo)} (${sg.itens.length})</h4>
-            <div id="grupoAnimal${i}_sub${j}"></div>
-          `).join('')}`;
+        return html + g.subgrupos.map((sg, j) => {
+          const chaveSg = chaveSub(chaveG, sg.titulo);
+          const subAberto = subAbertos.has(chaveSg);
+          let h = `<h4 data-toggle-grp="${Utils.escapeHtml(chaveSg)}" style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text-muted);margin:10px 0 8px;">${subAberto ? '▾' : '▸'} ${Utils.escapeHtml(sg.titulo)} (${sg.itens.length})</h4>`;
+          if (subAberto) h += `<div id="grupoAnimal${i}_sub${j}"></div>`;
+          return h;
+        }).join('');
       }).join('');
 
       gruposPrincipais.forEach((g, i) => {
+        const chaveG = chavePrincipal(g.titulo);
+        if (!principaisAbertos.has(chaveG)) return;
         if (!g.subgrupos) {
           UI.renderList(raiz.querySelector(`#grupoAnimal${i}`), {
             data: g.itens,
@@ -411,6 +431,8 @@ const Rebanho = {
           return;
         }
         g.subgrupos.forEach((sg, j) => {
+          const chaveSg = chaveSub(chaveG, sg.titulo);
+          if (!subAbertos.has(chaveSg)) return;
           UI.renderList(raiz.querySelector(`#grupoAnimal${i}_sub${j}`), {
             data: sg.itens,
             onCardClick: (a) => this.abrirFormAnimal(a),
@@ -419,8 +441,18 @@ const Rebanho = {
         });
       });
 
+      raiz.querySelectorAll('[data-toggle-grp]').forEach(el => {
+        el.addEventListener('click', () => {
+          const chave = el.dataset.toggleGrp;
+          const set = chave.includes('||') ? subAbertos : principaisAbertos;
+          if (set.has(chave)) set.delete(chave); else set.add(chave);
+          desenhar();
+        });
+      });
+
       raiz.querySelectorAll('[data-parto-de]').forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
           const mae = Api.get('animais', btn.dataset.partoDe);
           this.abrirFormParto(null, mae);
         });
