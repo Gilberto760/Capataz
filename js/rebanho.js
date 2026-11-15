@@ -167,55 +167,64 @@ const Rebanho = {
       </li>`).join('')}</ul>`;
   },
 
+  // Segue a cadeia pai_id/mae_id a partir da raiz pelo caminho dado (ex: ['pai','mae'] = mãe
+  // do pai). Retorna null assim que a cadeia quebrar (algum ancestral no meio não cadastrado).
+  resolverAncestral(raiz, caminho) {
+    let atual = raiz;
+    for (const passo of caminho) {
+      if (!atual) return null;
+      const id = atual[passo === 'pai' ? 'pai_id' : 'mae_id'];
+      atual = id ? Api.get('animais', id) : null;
+    }
+    return atual;
+  },
+
+  // Desenha um ramo da árvore tradicional (caixa do ancestral + seus dois ramos à direita,
+  // Pai sempre em cima e Mãe embaixo), recursivamente até `geracoesRestantes`. Acumula em
+  // `slotsClicaveis` os espaços vazios que já podem ser preenchidos (o ancestral anterior na
+  // cadeia existe) — os que ainda não podem (cadeia quebrada antes dele) ficam só com "—".
+  renderRamoPedigree(raiz, caminho, geracoesRestantes, slotsClicaveis) {
+    const ehRaiz = caminho.length === 0;
+    const ancestral = ehRaiz ? raiz : this.resolverAncestral(raiz, caminho);
+    let caixaHtml;
+    if (ehRaiz) {
+      caixaHtml = `<div class="ped-caixa ped-caixa-raiz">${Utils.escapeHtml(raiz.nome)}</div>`;
+    } else {
+      const label = this.labelAncestral(caminho);
+      if (ancestral) {
+        caixaHtml = `<div class="ped-caixa"><div class="ped-caixa-label">${Utils.escapeHtml(label)}</div><div class="ped-caixa-nome">${Utils.escapeHtml(ancestral.nome)}</div></div>`;
+      } else {
+        const owner = this.resolverAncestral(raiz, caminho.slice(0, -1));
+        if (owner) {
+          const ultimoEhPai = caminho[caminho.length - 1] === 'pai';
+          const slotId = 'slotAdd' + slotsClicaveis.length;
+          slotsClicaveis.push({ id: slotId, destino: owner, campo: ultimoEhPai ? 'pai_id' : 'mae_id', sexo: ultimoEhPai ? 'M' : 'F', label });
+          caixaHtml = `<div class="ped-caixa ped-caixa-vazia"><div class="ped-caixa-label">${Utils.escapeHtml(label)}</div><div>não cadastrado(a)</div>
+            <button type="button" class="btn btn-ghost ped-caixa-add" data-slot="${slotId}">+ Cadastrar/vincular</button></div>`;
+        } else {
+          caixaHtml = `<div class="ped-caixa ped-caixa-indisponivel"><div class="ped-caixa-label">${Utils.escapeHtml(label)}</div><div>—</div></div>`;
+        }
+      }
+    }
+    if (geracoesRestantes <= 0) return `<div class="ped-nivel">${caixaHtml}</div>`;
+    return `<div class="ped-nivel">${caixaHtml}
+      <div class="ped-filhos">
+        <div class="ped-ramo">${this.renderRamoPedigree(raiz, [...caminho, 'pai'], geracoesRestantes - 1, slotsClicaveis)}</div>
+        <div class="ped-ramo">${this.renderRamoPedigree(raiz, [...caminho, 'mae'], geracoesRestantes - 1, slotsClicaveis)}</div>
+      </div>
+    </div>`;
+  },
+
   abrirArvoreGenealogica(animalRef) {
     // Rebusca sempre do cache: depois de vincular/cadastrar um ancestral a árvore é reaberta
     // pra mostrar o resultado, e o objeto `animalRef` passado antes dessa atualização ficaria
     // com mae_id/pai_id desatualizados.
     const animal = Api.get('animais', animalRef.id) || animalRef;
-    const nomeGeracao = ['Pais', 'Avós', 'Bisavós'];
 
-    // Monta geração por geração (até bisavôs/bisavós): cada nó existente é expandido nos dois
-    // slots (pai/mãe); um slot vazio aparece com botão pra completar, mas só continua sendo
-    // expandido nas gerações seguintes se alguém vier a ocupá-lo.
-    let expandir = [{ animal, caminho: [] }];
-    const geracoesHtml = [];
     const slotsClicaveis = []; // { id, destino, campo, sexo, label }
-
-    for (let nivel = 1; nivel <= 3 && expandir.length; nivel++) {
-      const slots = [];
-      const proximaExpansao = [];
-      expandir.forEach(no => {
-        [['pai', 'pai_id', 'M'], ['mae', 'mae_id', 'F']].forEach(([passo, campo, sexo]) => {
-          const caminho = [...no.caminho, passo];
-          const ancestralId = no.animal[campo];
-          const ancestral = ancestralId ? Api.get('animais', ancestralId) : null;
-          slots.push({ ancestral, caminho, owner: no.animal, campo, sexo });
-          if (ancestral) proximaExpansao.push({ animal: ancestral, caminho });
-        });
-      });
-      geracoesHtml.push(`
-        <div class="arvore-geracao">
-          <div class="arvore-geracao-titulo">${nomeGeracao[nivel - 1] || 'Ancestrais'}</div>
-          <div class="arvore-linha">
-            ${slots.map((s) => {
-              const label = this.labelAncestral(s.caminho);
-              if (s.ancestral) {
-                return `<div class="arvore-slot"><div class="arvore-slot-label">${Utils.escapeHtml(label)}</div><div class="arvore-slot-nome">${Utils.escapeHtml(s.ancestral.nome)}</div></div>`;
-              }
-              const slotId = 'slotAdd' + slotsClicaveis.length;
-              slotsClicaveis.push({ id: slotId, destino: s.owner, campo: s.campo, sexo: s.sexo, label });
-              return `<div class="arvore-slot arvore-slot-vazio"><div class="arvore-slot-label">${Utils.escapeHtml(label)}</div><div>não cadastrado(a)</div>
-                <button type="button" class="btn btn-ghost arvore-slot-add" data-slot="${slotId}">+ Cadastrar/vincular</button></div>`;
-            }).join('')}
-          </div>
-        </div>`);
-      expandir = proximaExpansao;
-    }
-
-    const htmlAncestrais = `
-      <h3 class="section-title" style="margin-top:0;">Genealogia</h3>
-      <div class="arvore-ancestrais"><div class="arvore-no-atual">${Utils.escapeHtml(animal.nome)}</div></div>
-      ${geracoesHtml.join('')}`;
+    const htmlArvore = `
+      <h3 class="section-title" style="margin-top:0;">Genealogia (Pais, Avós e Bisavós)</h3>
+      <div class="ped-tree">${this.renderRamoPedigree(animal, [], 3, slotsClicaveis)}</div>`;
 
     const descHtml = this.descendentesHtml(animal.id, 3);
     const htmlDescendentes = `
@@ -224,7 +233,7 @@ const Rebanho = {
 
     const box = UI.abrirInfo({
       titulo: `Árvore genealógica — ${animal.nome}`,
-      html: htmlAncestrais + htmlDescendentes
+      html: htmlArvore + htmlDescendentes
     });
     slotsClicaveis.forEach((s) => {
       const btn = box.querySelector(`[data-slot="${s.id}"]`);
