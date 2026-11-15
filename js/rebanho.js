@@ -43,8 +43,9 @@ const Rebanho = {
   // Quais grupos/subgrupos da lista de Animais estão expandidos — fica fora da função de
   // render (senão todo redesenho, ex: depois de salvar um formulário, voltaria com tudo
   // fechado de novo). Começa tudo fechado: com centenas de animais, renderizar o card de
-  // cada um já na abertura da tela deixaria a lista pesada à toa.
-  _gruposAnimaisAbertos: { principais: new Set(), sub: new Set() },
+  // cada um já na abertura da tela deixaria a lista pesada à toa. Os 3 níveis fixos são
+  // Proprietário(a) → Espécie → Categoria (essa última só existe pra Bovina).
+  _gruposAnimaisAbertos: { nivel1: new Set(), nivel2: new Set(), nivel3: new Set() },
 
   // Regra única usada em toda venda registrada fora do formulário de Animal (Movimentação,
   // importação de planilha da GTA): marca o animal como Vendido e, se for um(a) bezerro(a)
@@ -307,16 +308,10 @@ const Rebanho = {
         <button class="chip" data-st="Inativo">Inativos</button>
         <button class="chip" data-st="todos">Todos</button>
       </div>
-      <div class="filter-chips" id="filtroAgrupamento">
-        <span class="hint" style="align-self:center;margin-right:4px;">Agrupar por:</span>
-        <button class="chip active" data-ag="especie">Espécie</button>
-        <button class="chip" data-ag="proprietario">Proprietário(a)</button>
-      </div>
       <div id="listaAnimais"></div>`;
 
     let fazendaAtiva = 'todas';
     let statusAtivo = 'Ativo';
-    let agrupamento = 'especie';
 
     const renderCardAnimal = (a) => {
       const stCls = { Ativo: 'green', Vendido: 'orange', Morreu: 'red' }[a.situacao || 'Ativo'] || 'red';
@@ -354,97 +349,75 @@ const Rebanho = {
         return;
       }
 
-      // Bovina ainda é subdividida por categoria (Bezerro(a), Garrote(a), Novilho(a), Boi, Reprodutor, Vaca...) —
-      // só faz sentido dentro do agrupamento por Espécie, já que é a própria espécie que define as categorias.
+      // Agrupamento fixo em 3 níveis: Proprietário(a) → Espécie → Categoria (essa última só
+      // existe pra Bovina, que é a única espécie com categorias definidas).
+      const agrupar = (itens, chaveDe) => {
+        const grupos = {};
+        itens.forEach(a => { const c = chaveDe(a); (grupos[c] = grupos[c] || []).push(a); });
+        return grupos;
+      };
+      const porProp = agrupar(lista, a => {
+        const prop = a.proprietario_id ? Api.get('proprietarios', a.proprietario_id) : null;
+        return prop ? prop.nome : 'Sem proprietário(a)';
+      });
+      const nomesProp = Object.keys(porProp).sort((a, b) => {
+        if (a === 'Sem proprietário(a)') return 1;
+        if (b === 'Sem proprietário(a)') return -1;
+        return a.localeCompare(b);
+      });
+      const ordemEspecies = [...this.especies, 'Não informada'];
       const ordemCategoriasBovina = [...this.categoriasPorEspecie.Bovina, 'Sem categoria'];
-      const categoriasDe = (esp, animaisEsp) => {
-        if (esp !== 'Bovina') return null;
-        const subgrupos = {};
-        animaisEsp.forEach(a => {
-          const cat = a.categoria || 'Sem categoria';
-          (subgrupos[cat] = subgrupos[cat] || []).push(a);
+
+      const arvore = nomesProp.map(nomeProp => {
+        const porEsp = agrupar(porProp[nomeProp], a => a.especie || 'Não informada');
+        const especiesPresentes = Object.keys(porEsp).sort((a, b) => ordemEspecies.indexOf(a) - ordemEspecies.indexOf(b));
+        const filhosEsp = especiesPresentes.map(esp => {
+          if (esp !== 'Bovina') return { titulo: esp, itens: porEsp[esp], filhos: null };
+          const porCat = agrupar(porEsp[esp], a => a.categoria || 'Sem categoria');
+          const categoriasPresentes = Object.keys(porCat).sort((a, b) => ordemCategoriasBovina.indexOf(a) - ordemCategoriasBovina.indexOf(b));
+          return { titulo: esp, itens: null, filhos: categoriasPresentes.map(cat => ({ titulo: cat, itens: porCat[cat], filhos: null })) };
         });
-        return Object.keys(subgrupos).sort((a, b) => ordemCategoriasBovina.indexOf(a) - ordemCategoriasBovina.indexOf(b)).map(cat => ({ titulo: cat, itens: subgrupos[cat] }));
+        return { titulo: nomeProp, itens: null, filhos: filhosEsp };
+      });
+
+      // Cada nível é colapsável e começa fechado — com centenas de animais, deixar tudo
+      // sempre aberto (todos os cards renderizados de uma vez) deixaria a lista pesada à toa;
+      // só a lista do que estiver expandido é montada de verdade.
+      const setsPorNivel = [this._gruposAnimaisAbertos.nivel1, this._gruposAnimaisAbertos.nivel2, this._gruposAnimaisAbertos.nivel3];
+      const tagPorNivel = ['h3', 'h4', 'h5'];
+      const listasParaMontar = []; // { domId, itens }
+
+      const renderNo = (no, caminho, nivel) => {
+        const chave = caminho.concat(no.titulo).join('||');
+        const totalItens = no.itens ? no.itens.length : no.filhos.reduce((s, f) => s + (f.itens ? f.itens.length : f.filhos.reduce((s2, f2) => s2 + f2.itens.length, 0)), 0);
+        const aberto = setsPorNivel[nivel].has(chave);
+        const tag = tagPorNivel[nivel] || 'h5';
+        const estiloExtra = nivel === 0 ? '' : 'font-size:13px;font-weight:700;color:var(--text-muted);margin:10px 0 8px;';
+        let html = `<${tag} class="${nivel === 0 ? 'section-title' : ''}" data-toggle-grp="${Utils.escapeHtml(chave)}" data-nivel="${nivel}" style="cursor:pointer;${estiloExtra}">${aberto ? '▾' : '▸'} ${Utils.escapeHtml(no.titulo)} (${totalItens})</${tag}>`;
+        if (!aberto) return html;
+        if (!no.filhos) {
+          const domId = 'grupoAnimal_' + listasParaMontar.length;
+          listasParaMontar.push({ domId, itens: no.itens });
+          return html + `<div id="${domId}" style="margin-left:${nivel * 12}px;"></div>`;
+        }
+        return html + no.filhos.map(f => `<div style="margin-left:${(nivel + 1) * 4}px;">${renderNo(f, caminho.concat(no.titulo), nivel + 1)}</div>`).join('');
       };
 
-      // Monta os grupos de 1º nível de acordo com o agrupamento escolhido (chips "Agrupar por").
-      let gruposPrincipais;
-      if (agrupamento === 'proprietario') {
-        const porProp = {};
-        lista.forEach(a => {
-          const prop = a.proprietario_id ? Api.get('proprietarios', a.proprietario_id) : null;
-          const nome = prop ? prop.nome : 'Sem proprietário(a)';
-          (porProp[nome] = porProp[nome] || []).push(a);
-        });
-        const nomes = Object.keys(porProp).sort((a, b) => {
-          if (a === 'Sem proprietário(a)') return 1;
-          if (b === 'Sem proprietário(a)') return -1;
-          return a.localeCompare(b);
-        });
-        gruposPrincipais = nomes.map(nome => ({ titulo: nome, itens: porProp[nome], subgrupos: null }));
-      } else {
-        const grupos = {};
-        lista.forEach(a => {
-          const esp = a.especie || 'Não informada';
-          (grupos[esp] = grupos[esp] || []).push(a);
-        });
-        const ordemEspecies = [...this.especies, 'Não informada'];
-        const especiesPresentes = Object.keys(grupos).sort((a, b) => ordemEspecies.indexOf(a) - ordemEspecies.indexOf(b));
-        gruposPrincipais = especiesPresentes.map(esp => ({ titulo: esp, itens: grupos[esp], subgrupos: categoriasDe(esp, grupos[esp]) }));
-      }
+      raiz.innerHTML = arvore.map(no => renderNo(no, [], 0)).join('');
 
-      // Cada grupo/subgrupo é colapsável — com centenas de animais, deixar tudo sempre aberto
-      // (todos os cards renderizados de uma vez) deixaria a tela pesada; aqui só a lista do
-      // que estiver expandido é montada de verdade. As chaves levam o modo de agrupamento na
-      // frente pra não misturar o estado "aberto" de Espécie com o de Proprietário(a).
-      const principaisAbertos = this._gruposAnimaisAbertos.principais;
-      const subAbertos = this._gruposAnimaisAbertos.sub;
-      const chavePrincipal = (titulo) => `${agrupamento}|${titulo}`;
-      const chaveSub = (chavePai, subTitulo) => `${chavePai}||${subTitulo}`;
-
-      raiz.innerHTML = gruposPrincipais.map((g, i) => {
-        const chaveG = chavePrincipal(g.titulo);
-        const aberto = principaisAbertos.has(chaveG);
-        let html = `<h3 class="section-title" data-toggle-grp="${Utils.escapeHtml(chaveG)}" style="cursor:pointer;">${aberto ? '▾' : '▸'} ${Utils.escapeHtml(g.titulo)} (${g.itens.length})</h3>`;
-        if (!aberto) return html;
-        if (!g.subgrupos) {
-          return html + `<div id="grupoAnimal${i}"></div>`;
-        }
-        return html + g.subgrupos.map((sg, j) => {
-          const chaveSg = chaveSub(chaveG, sg.titulo);
-          const subAberto = subAbertos.has(chaveSg);
-          let h = `<h4 data-toggle-grp="${Utils.escapeHtml(chaveSg)}" style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text-muted);margin:10px 0 8px;">${subAberto ? '▾' : '▸'} ${Utils.escapeHtml(sg.titulo)} (${sg.itens.length})</h4>`;
-          if (subAberto) h += `<div id="grupoAnimal${i}_sub${j}"></div>`;
-          return h;
-        }).join('');
-      }).join('');
-
-      gruposPrincipais.forEach((g, i) => {
-        const chaveG = chavePrincipal(g.titulo);
-        if (!principaisAbertos.has(chaveG)) return;
-        if (!g.subgrupos) {
-          UI.renderList(raiz.querySelector(`#grupoAnimal${i}`), {
-            data: g.itens,
-            onCardClick: (a) => this.abrirFormAnimal(a),
-            renderCard: renderCardAnimal
-          });
-          return;
-        }
-        g.subgrupos.forEach((sg, j) => {
-          const chaveSg = chaveSub(chaveG, sg.titulo);
-          if (!subAbertos.has(chaveSg)) return;
-          UI.renderList(raiz.querySelector(`#grupoAnimal${i}_sub${j}`), {
-            data: sg.itens,
-            onCardClick: (a) => this.abrirFormAnimal(a),
-            renderCard: renderCardAnimal
-          });
+      listasParaMontar.forEach(({ domId, itens }) => {
+        UI.renderList(raiz.querySelector(`#${domId}`), {
+          data: itens,
+          onCardClick: (a) => this.abrirFormAnimal(a),
+          renderCard: renderCardAnimal
         });
       });
 
       raiz.querySelectorAll('[data-toggle-grp]').forEach(el => {
         el.addEventListener('click', () => {
           const chave = el.dataset.toggleGrp;
-          const set = chave.includes('||') ? subAbertos : principaisAbertos;
+          const nivel = Number(el.dataset.nivel);
+          const set = setsPorNivel[nivel];
           if (set.has(chave)) set.delete(chave); else set.add(chave);
           desenhar();
         });
@@ -484,14 +457,6 @@ const Rebanho = {
         container.querySelectorAll('#filtroStatusAnimal .chip').forEach(c => c.classList.remove('active'));
         chip.classList.add('active');
         statusAtivo = chip.dataset.st;
-        desenhar();
-      });
-    });
-    container.querySelectorAll('#filtroAgrupamento .chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        container.querySelectorAll('#filtroAgrupamento .chip').forEach(c => c.classList.remove('active'));
-        chip.classList.add('active');
-        agrupamento = chip.dataset.ag;
         desenhar();
       });
     });
