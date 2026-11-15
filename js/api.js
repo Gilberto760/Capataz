@@ -226,7 +226,17 @@ const Api = {
           continue;
         }
         const local = this.get(item.tabela, item.id);
-        if (local) delete local._pendente;
+        if (local) {
+          delete local._pendente;
+        } else if (item.op === 'create') {
+          // Um carregarTudo() rodando ao mesmo tempo (ex: a tela recarregou e buscou tudo de
+          // novo do servidor) pode ter sobrescrito o cache ENQUANTO esse item ainda estava na
+          // fila pra sincronizar — aí, mesmo com o POST tendo dado certo (o registro existe no
+          // banco), ele sumia da tela pra sempre, porque nada recolocava no cache local depois.
+          // Sem isso: criou, recarregou rápido demais, sumiu — mesmo salvo no servidor.
+          this.cache[item.tabela] = this.cache[item.tabela] || [];
+          this.cache[item.tabela].unshift(Object.assign({ created_at: new Date().toISOString() }, item.payload));
+        }
       }
       this.salvarCache();
       this.outbox = restantes;

@@ -27,10 +27,12 @@ const App = {
     window.addEventListener('offline', () => this.refresh());
 
     if (Api.configurado()) {
-      Api.carregarTudo().then(() => this.refresh());
-      // Tenta mandar pendências que ficaram na fila de uma sessão anterior — sem isso, elas só
-      // tentam de novo quando o usuário edita algo novo ou clica em "Sincronizar agora".
-      Api.sincronizar();
+      // Manda primeiro o que ficou pendente de uma sessão anterior, e só DEPOIS busca tudo do
+      // servidor — na ordem errada (os dois ao mesmo tempo), um carregarTudo() que termina antes
+      // da fila acabar de subir sobrescreve o cache local inteiro com uma versão do servidor
+      // que ainda não tem esses registros novos, e eles somem da tela pra sempre (mesmo com o
+      // envio tendo dado certo depois, só silenciosamente no servidor).
+      Api.sincronizar().then(() => Api.carregarTudo()).then(() => this.refresh());
     }
 
     if ('serviceWorker' in navigator) {
