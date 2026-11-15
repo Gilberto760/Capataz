@@ -542,13 +542,14 @@ const Compras = {
         };
 
         const abrirItem = (item) => {
+          const fazendaAtual = form.querySelector('[name="fazenda"]').value || (vinculo && vinculo.fazenda) || '';
           if (reg) {
-            this.abrirFormItem(item, reg);
+            this.abrirFormItem(item, reg, null, { fazendaPadrao: fazendaAtual });
           } else {
             this.abrirFormItem(item, null, {
               lista: itensDraft,
               onMudou: () => this.abrirFormCompra(null, { dadosIniciais: capturarDadosAtuais(), itensDraft, vinculo })
-            });
+            }, { fazendaPadrao: fazendaAtual });
           }
         };
         secao.querySelector('#btnFichaItem').addEventListener('click', () => abrirItem(null));
@@ -613,16 +614,71 @@ const Compras = {
         } } },
       { key: 'unidade', label: 'Unidade', type: 'text', suggestions: ['kg', 'g', 'Litro', 'un', 'Saco 60 Kg', 'Tonelada', 'Arroba', 'Cabeça', 'Caixa', 'Pacote', 'Rolo', 'Metro'] },
       { key: 'quantidade', label: 'Quantidade', type: 'number', step: '0.01', required: true },
-      { key: 'valor_unitario', label: 'Valor unitário (R$)', type: 'number', step: '0.01', required: true }
+      { key: 'valor_unitario', label: 'Valor unitário (R$)', type: 'number', step: '0.01', required: true },
+      // Campos só usados quando o item é a compra de animais de verdade (ex: "18 Bezerras") —
+      // nunca vão pro registro em itens_compra, só servem pra criar os animais no Rebanho.
+      { key: 'incluir_rebanho', label: '🐄 Incluir estes animais no Rebanho', type: 'checkbox' },
+      { key: 'especie_animal', label: 'Espécie', type: 'select', options: Rebanho.especies.map(e => ({ value: e, label: e })), default: 'Bovina' },
+      { key: 'categoria_animal', label: 'Categoria', type: 'text', suggestions: Rebanho.categoriasSugestao('Bovina') },
+      { key: 'sexo_animal', label: 'Sexo', type: 'select', options: [{ value: 'F', label: 'Fêmea (F)' }, { value: 'M', label: 'Macho (M)' }] },
+      { key: 'fazenda_animal', label: 'Fazenda', type: 'text', suggestions: Rebanho.fazendasConhecidas(), default: opcoes.fazendaPadrao || '' },
+      { key: 'nascimento_animal', label: 'Data de nascimento (se souber)', type: 'date' }
     ];
+    const camposAnimal = ['especie_animal', 'categoria_animal', 'sexo_animal', 'fazenda_animal', 'nascimento_animal'];
     UI.abrirFormulario({
       titulo: item ? 'Editar item' : 'Novo item da compra',
       schema,
-      dados: item || opcoes.dadosIniciais || { quantidade: 1 },
+      dados: item || opcoes.dadosIniciais || { quantidade: 1, especie_animal: 'Bovina', fazenda_animal: opcoes.fazendaPadrao || '' },
+      onRender: (box) => {
+        const form = box.querySelector('#dynForm');
+        const checkRebanho = form.querySelector('[name="incluir_rebanho"]');
+        const camposAnimalEl = camposAnimal.map(k => form.querySelector(`[name="${k}"]`).closest('.form-group'));
+        const alternarCampos = () => camposAnimalEl.forEach(el => { el.hidden = !checkRebanho.checked; });
+        alternarCampos();
+        checkRebanho.addEventListener('change', alternarCampos);
+        const campoEspecie = form.querySelector('[name="especie_animal"]');
+        campoEspecie.addEventListener('change', (e) => {
+          UI.atualizarSugestoes(box, 'categoria_animal', Rebanho.categoriasSugestao(e.target.value));
+        });
+      },
       onSalvar: async (dados) => {
+        // Separa os campos de animal do que realmente é o item de compra — itens_compra não
+        // tem essas colunas.
+        const incluirRebanho = dados.incluir_rebanho;
+        const dadosAnimal = {
+          especie: dados.especie_animal, categoria: dados.categoria_animal,
+          sexo: dados.sexo_animal, fazenda: dados.fazenda_animal, nascimento: dados.nascimento_animal
+        };
+        camposAnimal.concat('incluir_rebanho').forEach(k => delete dados[k]);
+
+        // Retorna quantos animais criou, pra entrar na mensagem final (sem pisar no toast de
+        // "Item salvo" mostrado logo em seguida).
+        const criarAnimaisDoItem = async () => {
+          if (!incluirRebanho) return 0;
+          const qtd = Math.max(0, Math.round(Number(dados.quantidade) || 0));
+          if (!qtd) return 0;
+          const nomeProdutoItem = this.nomeProduto(dados.produto_id);
+          for (let n = 1; n <= qtd; n++) {
+            const novo = {
+              nome: `${nomeProdutoItem} (Compra ${Utils.fmtData(Utils.hoje())}) - ${n}`,
+              especie: dadosAnimal.especie || 'Bovina',
+              sexo: dadosAnimal.sexo || null,
+              categoria: dadosAnimal.categoria || null,
+              fazenda: dadosAnimal.fazenda || null,
+              nascimento: dadosAnimal.nascimento || null,
+              situacao: 'Ativo',
+              observacao: `Lançado automaticamente a partir de uma compra de ${nomeProdutoItem}. Edite o nome/brinco quando souber.`
+            };
+            await Api.criar('animais', novo);
+          }
+          return qtd;
+        };
+
         if (draft) {
           if (item) Object.assign(item, dados);
           else draft.lista.push(dados);
+          const qtdCriada = await criarAnimaisDoItem();
+          if (qtdCriada) Utils.toast(`${qtdCriada} animal(is) incluído(s) no Rebanho.`);
           // Esse form e o de "Nova compra" usam o mesmo modal; sem o await aqui, o close()
           // do próprio modal de item roda DEPOIS de reabrir o de compra e fecha ele de novo.
           await Promise.resolve();
@@ -632,7 +688,8 @@ const Compras = {
         if (item) await Api.atualizar('itens_compra', item.id, dados);
         else await Api.criar('itens_compra', Object.assign({ compra_id: compra.id }, dados));
         await this.recalcularTotalCompra(compra.id);
-        Utils.toast('Item salvo.');
+        const qtdCriada = await criarAnimaisDoItem();
+        Utils.toast(qtdCriada ? `Item salvo e ${qtdCriada} animal(is) incluído(s) no Rebanho.` : 'Item salvo.');
         this.abrirFormCompra(Api.get('compras', compra.id));
       },
       onExcluir: item ? async () => {
