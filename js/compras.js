@@ -951,13 +951,16 @@ const Compras = {
 
     container.innerHTML = `
       ${this._resumoFinanceiroHtml({ labelMetrica: 'Total produzido', tabela: 'producao', campoData: 'data', campoValor: 'valor_total', filtroAno: estado.filtroAno })}
-      <div class="toolbar"><div></div><button class="btn btn-primary" id="btnNovaProducao">+ Nova venda de produção</button></div>
+      <div class="form-card" style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <span class="hint" style="margin:0;">Uma nova venda de produção é lançada a partir de uma atividade, em Atividades → (abrir a atividade) → "+ Lançar receita" — assim ela já fica vinculada à safra/atividade certa.</span>
+        <button class="btn btn-secondary" id="btnIrAtividades" style="white-space:nowrap;">🌱 Ir para Atividades</button>
+      </div>
       <div class="filter-chips" id="filtroAnoProducao">
         <button class="chip ${estado.filtroAno === 'todos' ? 'active' : ''}" data-ano="todos">Todos os anos</button>
         ${anos.map(a => `<button class="chip ${estado.filtroAno === a ? 'active' : ''}" data-ano="${a}">${a}</button>`).join('')}
       </div>
       <div id="listaProducao"></div>`;
-    container.querySelector('#btnNovaProducao').addEventListener('click', () => this.abrirFormProducao(null));
+    container.querySelector('#btnIrAtividades').addEventListener('click', () => App.irPara('empreendimentos'));
     container.querySelectorAll('#filtroAnoProducao .chip').forEach(chip => {
       chip.addEventListener('click', () => {
         estado.filtroAno = chip.dataset.ano;
@@ -995,7 +998,11 @@ const Compras = {
     return Array.from(new Set(Api.list('producao').map(r => r.produto).filter(Boolean)));
   },
 
+  // Só edita um lançamento já existente — uma venda de produção nova sempre é lançada a
+  // partir da atividade (Empreendimentos.abrirFormReceita), pra já nascer vinculada à
+  // safra/atividade certa, em vez de avulsa aqui no Financeiro.
   abrirFormProducao(reg) {
+    if (!reg) { App.irPara('empreendimentos'); return; }
     const schema = [
       { key: 'safra', label: 'Safra', type: 'text', suggestions: this.safrasConhecidas() },
       { key: 'atividade', label: 'Atividade', type: 'text', suggestions: ['Agricultura', 'Pecuária'].concat(this.atividadesProducaoConhecidas()) },
