@@ -165,28 +165,80 @@ const Rebanho = {
       </li>`).join('')}</ul>`;
   },
 
-  abrirArvoreGenealogica(animal) {
+  abrirArvoreGenealogica(animalRef) {
+    // Rebusca sempre do cache: depois de vincular/cadastrar uma mãe a árvore é reaberta pra
+    // mostrar o resultado, e o objeto `animalRef` passado antes dessa atualização ficaria com
+    // mae_id desatualizado.
+    const animal = Api.get('animais', animalRef.id) || animalRef;
     const ancestrais = this.ancestraisMaternos(animal);
     const labelGeracao = ['Mãe', 'Avó materna', 'Bisavó materna', 'Trisavó materna', 'Tataravó materna', 'Ancestral materna'];
+    // Topo da linhagem conhecida: quem ainda não tem mãe cadastrada e pode receber uma —
+    // o próprio animal (se não tiver mãe nenhuma) ou o ancestral mais antigo já encontrado.
+    const topo = ancestrais.length ? ancestrais[ancestrais.length - 1] : animal;
+    const podeEstenderLinhagem = !topo.mae_id;
 
     const htmlAncestrais = `
       <h3 class="section-title" style="margin-top:0;">Linhagem materna</h3>
       <div class="arvore-ancestrais">
         <div class="arvore-no-atual">${Utils.escapeHtml(animal.nome)}</div>
-        ${ancestrais.length ? ancestrais.map((m, i) => `
+        ${ancestrais.map((m, i) => `
           <div class="arvore-seta">↑ ${labelGeracao[i] || 'Ancestral materna'}</div>
           <div class="arvore-no">${Utils.escapeHtml(m.nome)}</div>
-        `).join('') : '<div class="hint">Mãe não cadastrada.</div>'}
-      </div>`;
+        `).join('')}
+      </div>
+      ${podeEstenderLinhagem ? `
+        <div class="hint">${ancestrais.length ? 'Mãe de ' + Utils.escapeHtml(topo.nome) + ' não cadastrada.' : 'Mãe não cadastrada.'}</div>
+        <button type="button" class="btn btn-ghost" id="btnAddMae" style="margin-top:8px;">+ Cadastrar/vincular mãe de ${Utils.escapeHtml(topo.nome)}</button>
+      ` : ''}`;
 
     const descHtml = this.descendentesHtml(animal.id, 3);
     const htmlDescendentes = `
       <h3 class="section-title">Descendentes</h3>
       ${descHtml || '<div class="empty-state">Nenhum descendente cadastrado ainda.</div>'}`;
 
-    UI.abrirInfo({
+    const box = UI.abrirInfo({
       titulo: `Árvore genealógica — ${animal.nome}`,
       html: htmlAncestrais + htmlDescendentes
+    });
+    const btnAddMae = box.querySelector('#btnAddMae');
+    if (btnAddMae) btnAddMae.addEventListener('click', () => this.abrirFormVincularMae(topo, animal));
+  },
+
+  // Permite completar a árvore genealógica de um animal (ou de um ancestral dela) que ainda
+  // não tem mãe cadastrada: escolher uma fêmea já existente ou cadastrar uma nova, direto
+  // da própria tela da árvore.
+  abrirFormVincularMae(destino, animalOriginal) {
+    // Evita criar um ciclo (ex: vincular um descendente do próprio animal como se fosse ancestral dele).
+    const descendentesIds = new Set();
+    const coletarDescendentes = (id) => {
+      this.animais().filter(a => a.mae_id === id).forEach(f => { descendentesIds.add(f.id); coletarDescendentes(f.id); });
+    };
+    coletarDescendentes(destino.id);
+
+    const schema = [
+      { key: 'mae_id', label: `Mãe de ${destino.nome}`, type: 'select', busca: true, required: true,
+        optionsFrom: {
+          fetch: () => this.animais().filter(a => a.sexo === 'F' && a.id !== destino.id && !descendentesIds.has(a.id))
+            .sort((a, b) => (a.nome || '').localeCompare(b.nome || '')),
+          valueField: 'id', labelFn: a => a.nome
+        },
+        criarNovo: { label: 'Nova mãe (cadastrar animal)...', abrir: () => {
+          this.abrirFormAnimal(null, { especie: destino.especie, sexo: 'F', fazenda: destino.fazenda }, async (novaMae) => {
+            await Api.atualizar('animais', destino.id, { mae_id: novaMae.id });
+            Utils.toast('Mãe cadastrada e vinculada.');
+            this.abrirArvoreGenealogica(animalOriginal);
+          });
+        } } }
+    ];
+    UI.abrirFormulario({
+      titulo: `Vincular mãe de ${destino.nome}`,
+      schema,
+      dados: {},
+      onSalvar: async (dados) => {
+        await Api.atualizar('animais', destino.id, { mae_id: dados.mae_id });
+        Utils.toast('Mãe vinculada.');
+        this.abrirArvoreGenealogica(animalOriginal);
+      }
     });
   },
 
@@ -371,7 +423,7 @@ const Rebanho = {
       { key: 'observacao', label: 'Observação', type: 'textarea' }
     ];
     UI.abrirFormulario({
-      titulo: animal ? 'Editar animal' : (dadosIniciais ? `Novo animal (dados herdados de ${this.nomeAnimal(dadosIniciais.mae_id)})` : 'Novo animal'),
+      titulo: animal ? 'Editar animal' : ((dadosIniciais && dadosIniciais.mae_id) ? `Novo animal (dados herdados de ${this.nomeAnimal(dadosIniciais.mae_id)})` : 'Novo animal'),
       schema,
       dados: animal || dadosIniciais || { situacao: 'Ativo', classe_fiscal: 'Comum' },
       onRender: (box) => {
