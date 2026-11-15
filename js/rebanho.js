@@ -944,12 +944,18 @@ const Rebanho = {
     const schema = [
       { key: 'tipo', label: 'Tipo', type: 'select', required: true, options: [{ value: 'Compra', label: 'Compra' }, { value: 'Venda', label: 'Venda' }] },
       { key: 'especie', label: 'Espécie', type: 'select', required: true, options: this.especies.map(e => ({ value: e, label: e })) },
-      { key: 'gta_numero', label: 'Número da GTA', type: 'text', required: true },
+      // Número/série da GTA não são mais obrigatórios: o documento costuma demorar a chegar
+      // depois que os animais já estão na fazenda — dá pra lançar a compra e completar depois.
+      { key: 'gta_numero', label: 'Número da GTA (preencha quando o documento chegar)', type: 'text' },
       { key: 'gta_serie', label: 'Série', type: 'text' },
-      { key: 'data', label: 'Data de emissão', type: 'date', required: true },
+      { key: 'data', label: 'Data', type: 'date', required: true },
       { key: 'validade', label: 'Validade', type: 'date' },
       { key: 'finalidade', label: 'Finalidade', type: 'text', suggestions: this.finalidadesGta },
       { key: 'fazenda', label: 'Fazenda (qual das suas propriedades)', type: 'text', suggestions: this.fazendasConhecidas() },
+      // Só faz sentido numa Compra nova: é o que permite gerar automaticamente o lançamento
+      // financeiro em Compras (Financeiro), junto com os animais no Rebanho. Numa GTA já salva
+      // (reg existe) não aparece — essa parte financeira só acontece na hora de criar.
+      ...(!reg ? [{ key: 'fornecedor_id', label: 'Fornecedor (opcional — gera a compra no Financeiro)', type: 'select', busca: true, optionsFrom: { fetch: () => Api.list('fornecedores').sort((a, b) => (a.nome || '').localeCompare(b.nome || '')), valueField: 'id', labelFn: f => f.nome } }] : []),
       { key: 'origem_estabelecimento', label: 'Origem — Estabelecimento', type: 'text', suggestions: this.fazendasConhecidas() },
       { key: 'origem_nome', label: 'Origem — Nome/Produtor', type: 'text' },
       { key: 'origem_municipio', label: 'Origem — Município', type: 'text', suggestions: this.municipiosConhecidos() },
@@ -1008,13 +1014,14 @@ const Rebanho = {
         };
 
         const abrirItem = (item) => {
+          const tipoAtual = form.querySelector('[name="tipo"]').value;
           if (reg) {
-            this.abrirFormGtaItem(item, reg);
+            this.abrirFormGtaItem(item, reg, null, tipoAtual);
           } else {
             this.abrirFormGtaItem(item, null, {
               lista: itensDraft,
               onMudou: () => this.abrirFormGta(null, { dadosIniciais: capturarDadosAtuais(), itensDraft })
-            });
+            }, tipoAtual);
           }
         };
         secao.querySelector('#btnFichaItemGta').addEventListener('click', () => abrirItem(null));
@@ -1033,15 +1040,42 @@ const Rebanho = {
           Utils.toast('GTA salva.');
           App.refresh();
         } else {
+          // fornecedor_id só existe nesse formulário (não é coluna de gta_movimentacoes) —
+          // guarda à parte e tira do que vai ser gravado na GTA em si.
+          const fornecedorId = dados.fornecedor_id;
+          delete dados.fornecedor_id;
           const novaGta = await Api.criar('gta_movimentacoes', dados);
+          const itensComValor = [];
           for (const item of itensDraft) {
             const lancarRebanho = !!item.lancar_rebanho;
+            const valorUnitario = Number(item.valor_unitario) || 0;
             const itemLimpo = Object.assign({}, item);
             delete itemLimpo.lancar_rebanho;
+            delete itemLimpo.valor_unitario; // também não é coluna de gta_itens
             const criado = await Api.criar('gta_itens', Object.assign({ gta_id: novaGta.id }, itemLimpo));
             if (lancarRebanho) await this.lancarAnimaisDoLoteGta(criado, novaGta);
+            if (valorUnitario > 0) itensComValor.push(Object.assign({}, itemLimpo, { valor_unitario: valorUnitario }));
           }
-          Utils.toast(`GTA salva com ${itensDraft.length} lote(s).`);
+
+          // Se algum lote teve valor por cabeça informado, gera de brinde o lançamento
+          // financeiro em Compras — assim "lançar a GTA" já resolve rebanho + financeiro numa
+          // tela só, sem precisar repetir a compra lá no Financeiro.
+          let msgCompra = '';
+          if (dados.tipo === 'Compra' && itensComValor.length) {
+            const subtotal = itensComValor.reduce((s, i) => s + Number(i.quantidade_real || 0) * i.valor_unitario, 0);
+            const produtoId = await this.produtoAnimalPadrao(dados.especie);
+            const novaCompra = await Api.criar('compras', {
+              fornecedor_id: fornecedorId || null,
+              tipo: 'Nota Fiscal', data: dados.data, fazenda: dados.fazenda,
+              valor_total: subtotal, considerar_saida: true, irpf: true,
+              observacao: `Gerado automaticamente a partir da GTA${dados.gta_numero ? ' ' + dados.gta_numero : ' (sem número ainda)'}${dados.gta_serie ? '/' + dados.gta_serie : ''}.`
+            });
+            for (const i of itensComValor) {
+              await Api.criar('itens_compra', { compra_id: novaCompra.id, produto_id: produtoId, unidade: 'Cabeça', quantidade: i.quantidade_real, valor_unitario: i.valor_unitario });
+            }
+            msgCompra = ` e compra de ${Utils.fmtMoeda(subtotal)} lançada no Financeiro`;
+          }
+          Utils.toast(`GTA salva com ${itensDraft.length} lote(s)${msgCompra}.`);
           App.refresh();
         }
       },
@@ -1049,22 +1083,37 @@ const Rebanho = {
     });
   },
 
+  // Acha (ou cria) o produto genérico usado no item de Compra quando uma GTA de animais gera
+  // o lançamento financeiro sozinha — ex: "Bovinos" pra espécie Bovina.
+  async produtoAnimalPadrao(especie) {
+    const nomes = { Bovina: 'Bovinos', Equina: 'Equinos', Ovina: 'Ovinos', Caprina: 'Caprinos', Suína: 'Suínos' };
+    const nomeDesejado = nomes[especie] || especie || 'Animais';
+    let produto = Api.list('produtos').find(p => (p.nome || '').toLowerCase() === nomeDesejado.toLowerCase());
+    if (!produto) produto = await Api.criar('produtos', { nome: nomeDesejado, categoria: 'Animais' });
+    return produto.id;
+  },
+
   // draft (só quando a GTA ainda não existe): { lista, onMudou } — guarda o lote num array
-  // local até a GTA inteira ser salva, em vez de ir direto pro banco.
-  abrirFormGtaItem(item, gta, draft) {
+  // local até a GTA inteira ser salva, em vez de ir direto pro banco. tipoAtual (Compra/Venda)
+  // vem do formulário da GTA que ainda nem foi salvo, só pra decidir se mostra o campo de valor.
+  abrirFormGtaItem(item, gta, draft, tipoAtual) {
     const opcoesFaixa = Object.entries(this.labelFaixaAdapec).map(([value, label]) => ({ value, label }));
+    // O valor por cabeça (pra gerar a compra financeira sozinho) só faz sentido numa GTA de
+    // Compra que AINDA vai ser criada — numa GTA já salva não geramos compra retroativamente.
+    const mostrarValor = !!draft && tipoAtual === 'Compra';
     const schema = [
       { key: 'sexo', label: 'Sexo dos animais', type: 'select', required: true, options: [{ value: 'M', label: 'Macho' }, { value: 'F', label: 'Fêmea' }] },
       { key: 'faixa_etaria_real', label: 'Faixa etária — Real', type: 'select', required: true, options: opcoesFaixa },
       { key: 'quantidade_real', label: 'Quantidade real (o que realmente aconteceu)', type: 'number', step: '1', required: true },
       { key: 'faixa_etaria_legal', label: 'Faixa etária — Legal (como está na GTA)', type: 'select', required: true, options: opcoesFaixa },
       { key: 'quantidade_legal', label: 'Quantidade na GTA (legal)', type: 'number', step: '1', required: true },
+      ...(mostrarValor ? [{ key: 'valor_unitario', label: 'Valor pago por cabeça (R$) — opcional, gera a compra no Financeiro', type: 'number', step: '0.01' }] : []),
       { key: 'lancar_rebanho', label: 'Lançar automaticamente no Rebanho (na Compra, cria os animais reais como Ativos; na Venda, só avisa pra você marcar manualmente quais ficam Inativos)', type: 'checkbox' }
     ];
     UI.abrirFormulario({
       titulo: item ? 'Editar lote' : 'Novo lote da GTA',
       schema,
-      dados: item || {},
+      dados: item || (tipoAtual === 'Compra' ? { lancar_rebanho: true } : {}),
       onRender: (box) => {
         // Só faz sentido depois que o lote já existe de verdade (tem id numa GTA já salva) —
         // é a partir dele que sabemos sexo/quantidade pra montar o modelo certo.
