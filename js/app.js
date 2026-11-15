@@ -35,6 +35,22 @@ const App = {
       Api.sincronizar().then(() => Api.carregarTudo()).then(() => this.refresh());
     }
 
+    // Botão de sincronizar manual na barra superior — igual ao "Sincronizar agora" de Config,
+    // só que disponível em qualquer tela, sem precisar navegar até lá.
+    document.getElementById('btnSyncGlobal').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      if (btn.disabled) return;
+      btn.disabled = true;
+      btn.classList.add('girando');
+      Utils.toast('Sincronizando...');
+      await Api.sincronizar();
+      await Api.carregarTudo();
+      Utils.toast('Sincronização concluída.');
+      btn.classList.remove('girando');
+      btn.disabled = false;
+      this.refresh();
+    });
+
     if ('serviceWorker' in navigator) {
       // Registra e, se já havia um Service Worker ativo (não é o primeiro acesso), força a
       // checagem por uma versão nova e recarrega a página sozinho assim que ela assumir —
@@ -86,14 +102,17 @@ const App = {
     document.getElementById('topTitle').textContent = atual.label;
 
     const statusEl = document.getElementById('syncStatus');
+    const btnSync = document.getElementById('btnSyncGlobal');
     if (Api.configurado()) {
       const pend = Api.pendencias();
       statusEl.style.display = 'block';
+      btnSync.style.display = 'inline-flex';
       if (!navigator.onLine) statusEl.innerHTML = '🔴 Offline' + (pend ? ` · ${pend} pendente(s)` : '');
       else if (pend) statusEl.innerHTML = `🟡 Sincronizando ${pend} alteração(ões)...`;
       else statusEl.innerHTML = '🟢 Sincronizado';
     } else {
       statusEl.style.display = 'none';
+      btnSync.style.display = 'none';
     }
 
     const subtabsEl = document.getElementById('subtabs');

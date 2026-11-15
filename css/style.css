@@ -38,9 +38,22 @@ body {
   color: #fff;
   padding: 14px 16px 10px;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
+.top-bar-info { min-width: 0; }
 .top-bar h1 { font-size:19px; margin:0; font-weight:700; }
 .sync-status { font-size:12px; opacity:0.85; margin-top:4px; }
+.sync-btn {
+  flex-shrink: 0; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.35);
+  color: #fff; border-radius: 10px; padding: 7px 11px; font-size: 18px; line-height: 1;
+}
+.sync-btn:active { background: rgba(255,255,255,0.28); }
+.sync-btn:disabled { opacity: 0.6; }
+.sync-btn.girando { animation: sync-girar 1s linear infinite; }
+@keyframes sync-girar { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 .subtabs {
   display:flex;
