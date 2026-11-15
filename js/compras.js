@@ -653,23 +653,37 @@ const Compras = {
 
   /* ---------- FORNECEDORES ---------- */
   renderFornecedores(container) {
-    const regs = Api.list('fornecedores').sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+    const regsTodos = Api.list('fornecedores').sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
     container.innerHTML = `
-      <div class="toolbar"><div></div><button class="btn btn-primary" id="btnNovoFornecedor">+ Novo fornecedor</button></div>
+      <div class="toolbar">
+        <input type="text" id="buscaFornecedor" class="search-input" placeholder="🔎 Pesquisar fornecedor (nome, CPF/CNPJ, cidade)...">
+        <button class="btn btn-primary" id="btnNovoFornecedor">+ Novo fornecedor</button>
+      </div>
       <div id="listaFornecedores"></div>`;
     container.querySelector('#btnNovoFornecedor').addEventListener('click', () => this.abrirFormFornecedor(null));
-    UI.renderList(container.querySelector('#listaFornecedores'), {
-      data: regs,
-      emptyText: 'Nenhum fornecedor cadastrado ainda.',
-      onCardClick: (r) => this.abrirFormFornecedor(r),
-      renderCard: (r) => `
-        <div class="rec-title">${Utils.escapeHtml(r.nome)} ${r._pendente ? UI.badge('Pendente', 'orange') : ''}</div>
-        <div class="rec-row">
-          <span>${Utils.escapeHtml(r.cpf_cnpj || '-')}</span>
-          <span>${Utils.escapeHtml(r.telefone || '-')}</span>
-          <span>${Utils.escapeHtml(r.cidade || '-')}</span>
-        </div>`
-    });
+    const listaEl = container.querySelector('#listaFornecedores');
+    const desenhar = (termo) => {
+      const t = (termo || '').trim().toLowerCase();
+      const regs = !t ? regsTodos : regsTodos.filter(r =>
+        (r.nome || '').toLowerCase().includes(t) ||
+        (r.fantasia || '').toLowerCase().includes(t) ||
+        (r.cpf_cnpj || '').toLowerCase().includes(t) ||
+        (r.cidade || '').toLowerCase().includes(t));
+      UI.renderList(listaEl, {
+        data: regs,
+        emptyText: t ? 'Nenhum fornecedor encontrado para essa pesquisa.' : 'Nenhum fornecedor cadastrado ainda.',
+        onCardClick: (r) => this.abrirFormFornecedor(r),
+        renderCard: (r) => `
+          <div class="rec-title">${Utils.escapeHtml(r.nome)} ${r._pendente ? UI.badge('Pendente', 'orange') : ''}</div>
+          <div class="rec-row">
+            <span>${Utils.escapeHtml(r.cpf_cnpj || '-')}</span>
+            <span>${Utils.escapeHtml(r.telefone || '-')}</span>
+            <span>${Utils.escapeHtml(r.cidade || '-')}</span>
+          </div>`
+      });
+    };
+    container.querySelector('#buscaFornecedor').addEventListener('input', (e) => desenhar(e.target.value));
+    desenhar('');
   },
 
   abrirFormFornecedor(reg) {
@@ -704,19 +718,31 @@ const Compras = {
 
   /* ---------- PRODUTOS ---------- */
   renderProdutos(container) {
-    const regs = Api.list('produtos').sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+    const regsTodos = Api.list('produtos').sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
     container.innerHTML = `
-      <div class="toolbar"><div></div><button class="btn btn-primary" id="btnNovoProduto">+ Novo produto</button></div>
+      <div class="toolbar">
+        <input type="text" id="buscaProduto" class="search-input" placeholder="🔎 Pesquisar produto (nome ou categoria)...">
+        <button class="btn btn-primary" id="btnNovoProduto">+ Novo produto</button>
+      </div>
       <div id="listaProdutos"></div>`;
     container.querySelector('#btnNovoProduto').addEventListener('click', () => this.abrirFormProduto(null));
-    UI.renderList(container.querySelector('#listaProdutos'), {
-      data: regs,
-      emptyText: 'Nenhum produto cadastrado ainda.',
-      onCardClick: (r) => this.abrirFormProduto(r),
-      renderCard: (r) => `
-        <div class="rec-title">${Utils.escapeHtml(r.nome)} ${r.categoria ? UI.badge(r.categoria, 'blue') : ''} ${r._pendente ? UI.badge('Pendente', 'orange') : ''}</div>
-        ${r.estoque_minimo ? `<div class="rec-row"><span>Estoque mínimo: ${Utils.fmtNum(r.estoque_minimo, 2)}</span></div>` : ''}`
-    });
+    const listaEl = container.querySelector('#listaProdutos');
+    const desenhar = (termo) => {
+      const t = (termo || '').trim().toLowerCase();
+      const regs = !t ? regsTodos : regsTodos.filter(r =>
+        (r.nome || '').toLowerCase().includes(t) ||
+        (r.categoria || '').toLowerCase().includes(t));
+      UI.renderList(listaEl, {
+        data: regs,
+        emptyText: t ? 'Nenhum produto encontrado para essa pesquisa.' : 'Nenhum produto cadastrado ainda.',
+        onCardClick: (r) => this.abrirFormProduto(r),
+        renderCard: (r) => `
+          <div class="rec-title">${Utils.escapeHtml(r.nome)} ${r.categoria ? UI.badge(r.categoria, 'blue') : ''} ${r._pendente ? UI.badge('Pendente', 'orange') : ''}</div>
+          ${r.estoque_minimo ? `<div class="rec-row"><span>Estoque mínimo: ${Utils.fmtNum(r.estoque_minimo, 2)}</span></div>` : ''}`
+      });
+    };
+    container.querySelector('#buscaProduto').addEventListener('input', (e) => desenhar(e.target.value));
+    desenhar('');
   },
 
   // opcoes.onCriado(novoProduto)/opcoes.onCancelado(): usados quando o cadastro é aberto "por
