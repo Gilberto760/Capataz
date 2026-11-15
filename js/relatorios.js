@@ -35,18 +35,54 @@ const Relatorios = {
     const [y, m] = iso.split('-');
     return nomes[Number(m) - 1] + '/' + y.slice(2);
   },
-  barChart(titulo, entries, fmt) {
+  // onBarClick(label, indice), quando passado, deixa cada barra clicável — abre o detalhe de
+  // quais registros formam aquele total (this.abrirDetalheLinha). `indice` serve pros gráficos
+  // em que o rótulo mostrado (ex: "Jan/24") não é a própria chave usada pra filtrar os dados
+  // (ex: "2024-01") — quem chama usa o índice pra pegar a chave original na lista de origem.
+  barChart(titulo, entries, fmt, onBarClick) {
     const max = entries.length ? Math.max(...entries.map(e => Number(e[1]) || 0), 1) : 1;
+    const idBase = 'barChart_' + Math.random().toString(36).slice(2, 8);
+    if (onBarClick) {
+      // O HTML retornado ainda não está no documento quando esta função roda (só entra depois
+      // que o template literal que a chamou terminar e for atribuído a algum innerHTML) — um
+      // setTimeout(0) garante que a ligação dos cliques rode só depois disso.
+      setTimeout(() => {
+        const elChart = document.getElementById(idBase);
+        if (!elChart) return;
+        elChart.querySelectorAll('[data-bar-idx]').forEach(el => {
+          el.addEventListener('click', () => onBarClick(entries[Number(el.dataset.barIdx)][0], Number(el.dataset.barIdx)));
+        });
+      }, 0);
+    }
     return `
       <h3 class="section-title">${Utils.escapeHtml(titulo)}</h3>
-      <div class="bar-chart">
-        ${entries.length ? entries.map(([label, val]) => `
-          <div class="bar-row">
+      <div class="bar-chart" id="${idBase}">
+        ${entries.length ? entries.map(([label, val], i) => `
+          <div class="bar-row" ${onBarClick ? `data-bar-idx="${i}" style="cursor:pointer;"` : ''}>
             <div class="bar-label">${Utils.escapeHtml(label)}</div>
             <div class="bar-track"><div class="bar-fill" style="width:${(Number(val) / max * 100).toFixed(1)}%"></div></div>
             <div class="bar-value">${fmt ? fmt(val) : val}</div>
           </div>`).join('') : '<div class="empty-state">Sem dados ainda.</div>'}
       </div>`;
+  },
+
+  // Modal de detalhe aberto ao clicar numa barra: mostra os registros que compõem aquele
+  // total, cada um clicável pra abrir direto na tela/formulário de origem.
+  abrirDetalheLinha(titulo, linhas) {
+    if (!linhas.length) { Utils.toast('Nenhum registro encontrado para essa barra.'); return; }
+    const box = UI.abrirInfo({ titulo, html: '<div id="relDetalheLista"></div>' });
+    UI.renderList(box.querySelector('#relDetalheLista'), {
+      data: linhas,
+      emptyText: 'Nenhum registro encontrado.',
+      onCardClick: (l) => { if (l.onAbrir) l.onAbrir(); },
+      renderCard: (l) => `
+        <div class="rec-title">${Utils.escapeHtml(l.titulo || '-')}</div>
+        <div class="rec-row">
+          <span>${l.data ? Utils.fmtData(l.data) : '-'}</span>
+          ${l.sub ? `<span>${Utils.escapeHtml(l.sub)}</span>` : ''}
+          <span><b>${l.valorFmt != null ? l.valorFmt : ''}</b></span>
+        </div>`
+    });
   },
 
   /* ---------- Relatório: Rebanho ---------- */
@@ -96,6 +132,14 @@ const Relatorios = {
       motivosSaida[mo] = (motivosSaida[mo] || 0) + 1;
     });
 
+    const linhaAnimal = (a) => ({
+      titulo: a.nome,
+      sub: `${a.especie || '-'} · ${a.categoria || '-'} · ${a.sexo || '-'}`,
+      data: a.nascimento,
+      valorFmt: a.situacao || 'Ativo',
+      onAbrir: () => Rebanho.abrirFormAnimal(a)
+    });
+
     container.innerHTML = `
       <div class="cards-grid">
         <div class="stat-card"><div class="stat-label">Rebanho ativo</div><div class="stat-value">${ativos.length}</div></div>
@@ -106,11 +150,30 @@ const Relatorios = {
         <div class="stat-card"><div class="stat-label">IEP médio do rebanho</div><div class="stat-value">${iepMedioDias !== null ? (iepMedioDias / 30).toFixed(1) + ' meses' : '-'}</div></div>
       </div>
 
-      ${this.barChart('Rebanho por espécie', Object.entries(porEspecie).sort((a, b) => b[1] - a[1]))}
-      ${Object.keys(porCategoriaBovina).length ? this.barChart('Bovinos por categoria', Object.entries(porCategoriaBovina).sort((a, b) => b[1] - a[1])) : ''}
-      ${this.barChart('Rebanho por fazenda', Object.entries(porFazenda).sort((a, b) => b[1] - a[1]))}
-      ${this.barChart('Nascimentos por mês (últimos 12 meses)', meses.map(m => [this.labelMes(m), nascPorMes[m]]))}
-      ${Object.keys(motivosSaida).length ? this.barChart('Saídas do rebanho por motivo (12 meses)', Object.entries(motivosSaida).sort((a, b) => b[1] - a[1])) : ''}
+      ${this.barChart('Rebanho por espécie', Object.entries(porEspecie).sort((a, b) => b[1] - a[1]), null, (esp) =>
+        this.abrirDetalheLinha('Rebanho por espécie — ' + esp, ativos.filter(a => (a.especie || 'Sem espécie') === esp).map(linhaAnimal)))}
+      ${Object.keys(porCategoriaBovina).length ? this.barChart('Bovinos por categoria', Object.entries(porCategoriaBovina).sort((a, b) => b[1] - a[1]), null, (cat) =>
+        this.abrirDetalheLinha('Bovinos por categoria — ' + cat, ativos.filter(a => a.especie === 'Bovina' && (a.categoria || 'Sem categoria') === cat).map(linhaAnimal))) : ''}
+      ${this.barChart('Rebanho por fazenda', Object.entries(porFazenda).sort((a, b) => b[1] - a[1]), null, (faz) =>
+        this.abrirDetalheLinha('Rebanho por fazenda — ' + faz, ativos.filter(a => (a.fazenda || 'Sem fazenda') === faz).map(linhaAnimal)))}
+      ${this.barChart('Nascimentos por mês (últimos 12 meses)', meses.map(m => [this.labelMes(m), nascPorMes[m]]), null, (label, idx) => {
+        const mesIso = meses[idx];
+        this.abrirDetalheLinha('Nascimentos em ' + this.labelMes(mesIso), partos.filter(p => (p.data_parto || '').slice(0, 7) === mesIso).map(p => ({
+          titulo: Rebanho.nomeBezerro(p),
+          sub: 'Mãe: ' + Rebanho.nomeAnimal(p.mae_id),
+          data: p.data_parto,
+          valorFmt: p.sexo_bezerro || '-',
+          onAbrir: () => Rebanho.abrirFormParto(p)
+        })));
+      })}
+      ${Object.keys(motivosSaida).length ? this.barChart('Saídas do rebanho por motivo (12 meses)', Object.entries(motivosSaida).sort((a, b) => b[1] - a[1]), null, (motivo) =>
+        this.abrirDetalheLinha('Saídas por motivo — ' + motivo, movs.filter(m => m.tipo === 'Saída' && m.data >= ha12m && (m.motivo || 'Outro') === motivo).map(m => ({
+          titulo: Rebanho.nomeAnimal(m.animal_id),
+          sub: m.motivo || 'Outro',
+          data: m.data,
+          valorFmt: m.tipo,
+          onAbrir: () => Rebanho.abrirFormMovimentacao(m)
+        })))) : ''}
 
       <div class="toolbar"><div></div><button class="btn btn-ghost" id="btnExportarRebanhoCsv">Exportar rebanho (CSV)</button></div>
     `;
@@ -200,11 +263,37 @@ const Relatorios = {
           <div class="stat-card"><div class="stat-label">Fornecedores no período</div><div class="stat-value">${fornecedoresUsados}</div></div>
         </div>
 
-        ${anosOrdenadosAsc.length > 1 ? this.barChart('Gasto por ano', anosOrdenadosAsc.map(a => [a, porAno[a]]), Utils.fmtMoeda) : ''}
-        ${this.barChart('Gasto por centro de custo', Object.entries(porCentro).sort((a, b) => b[1] - a[1]), Utils.fmtMoeda)}
-        ${this.barChart('Top 10 fornecedores (valor comprado)', topFornecedores, Utils.fmtMoeda)}
-        ${this.barChart('Top 10 produtos (valor comprado)', topProdutosValor, Utils.fmtMoeda)}
-        ${topCategorias.length ? this.barChart('Gasto por categoria de produto', topCategorias, Utils.fmtMoeda) : ''}
+        ${(() => {
+          const linhaCompra = (c) => ({
+            titulo: (fornecedorById[c.fornecedor_id] && fornecedorById[c.fornecedor_id].nome) || '(sem fornecedor)',
+            sub: c.tipo || '-',
+            data: c.data,
+            valorFmt: Utils.fmtMoeda(c.valor_total),
+            onAbrir: () => Compras.abrirFormCompra(c)
+          });
+          const linhaItemCompra = (i) => {
+            const c = Api.get('compras', i.compra_id);
+            return {
+              titulo: (produtoById[i.produto_id] && produtoById[i.produto_id].nome) || '(sem produto)',
+              sub: c ? ((fornecedorById[c.fornecedor_id] && fornecedorById[c.fornecedor_id].nome) || '(sem fornecedor)') : '-',
+              data: c ? c.data : null,
+              valorFmt: Utils.fmtMoeda(Number(i.quantidade || 0) * Number(i.valor_unitario || 0)),
+              onAbrir: () => c && Compras.abrirFormCompra(c)
+            };
+          };
+          return `
+            ${anosOrdenadosAsc.length > 1 ? this.barChart('Gasto por ano', anosOrdenadosAsc.map(a => [a, porAno[a]]), Utils.fmtMoeda, (ano) =>
+              this.abrirDetalheLinha('Gasto por ano — ' + ano, compras.filter(c => ((c.data || '').slice(0, 4) || 'Sem data') === ano).map(linhaCompra))) : ''}
+            ${this.barChart('Gasto por centro de custo', Object.entries(porCentro).sort((a, b) => b[1] - a[1]), Utils.fmtMoeda, (faz) =>
+              this.abrirDetalheLinha('Gasto por centro de custo — ' + faz, comprasFiltradas.filter(c => (c.fazenda || 'Sem centro de custo') === faz).map(linhaCompra)))}
+            ${this.barChart('Top 10 fornecedores (valor comprado)', topFornecedores, Utils.fmtMoeda, (nome) =>
+              this.abrirDetalheLinha('Compras — ' + nome, comprasFiltradas.filter(c => ((fornecedorById[c.fornecedor_id] && fornecedorById[c.fornecedor_id].nome) || '(sem fornecedor)') === nome).map(linhaCompra)))}
+            ${this.barChart('Top 10 produtos (valor comprado)', topProdutosValor, Utils.fmtMoeda, (nome) =>
+              this.abrirDetalheLinha('Compras do produto — ' + nome, itensFiltrados.filter(i => ((produtoById[i.produto_id] && produtoById[i.produto_id].nome) || '(sem produto)') === nome).map(linhaItemCompra)))}
+            ${topCategorias.length ? this.barChart('Gasto por categoria de produto', topCategorias, Utils.fmtMoeda, (cat) =>
+              this.abrirDetalheLinha('Gasto por categoria — ' + cat, itensFiltrados.filter(i => ((produtoById[i.produto_id] && produtoById[i.produto_id].categoria) || 'Sem categoria') === cat).map(linhaItemCompra))) : ''}
+          `;
+        })()}
 
         <div class="toolbar"><div></div><button class="btn btn-ghost" id="btnExportarComprasCsv">Exportar compras do período (CSV)</button></div>
       `;
@@ -324,13 +413,58 @@ const Relatorios = {
           <div class="stat-card"><div class="stat-label">Margem</div><div class="stat-value">${Utils.fmtNum(margem, 1)}%</div></div>
         </div>
 
-        ${anosAsc.length > 1 ? this.barChart('Receita por ano', anosAsc.map(a => [a, receitaPorAno[a]]), Utils.fmtMoeda) : ''}
-        ${anosAsc.length > 1 ? this.barChart('Despesa por ano', anosAsc.map(a => [a, despesaPorAno[a]]), Utils.fmtMoeda) : ''}
-        ${this.barChart('Receita por mês (últimos 12 meses)', meses.map(m => [this.labelMes(m), receitaPorMes[m]]), Utils.fmtMoeda)}
-        ${this.barChart('Despesa por mês (últimos 12 meses)', meses.map(m => [this.labelMes(m), despesaPorMes[m]]), Utils.fmtMoeda)}
-        ${this.barChart('Receita por fazenda', Object.entries(receitaPorFazenda).sort((a, b) => b[1] - a[1]), Utils.fmtMoeda)}
-        ${this.barChart('Despesa por fazenda', Object.entries(despesaPorFazenda).sort((a, b) => b[1] - a[1]), Utils.fmtMoeda)}
-        ${topCategoriasDespesa.length ? this.barChart('Despesa por categoria', topCategoriasDespesa, Utils.fmtMoeda) : ''}
+        ${(() => {
+          const linhaProducao = (r) => ({ titulo: r.destinatario || '(produção)', sub: 'Produção', data: r.data, valorFmt: Utils.fmtMoeda(r.valor_total), onAbrir: () => Compras.abrirFormProducao(r) });
+          const linhaVenda = (r) => ({ titulo: r.comprador || '(venda)', sub: 'Vendas', data: r.data_venda, valorFmt: Utils.fmtMoeda(r.valor_total), onAbrir: () => Compras.abrirFormVenda(r) });
+          const linhaCompraFin = (r) => ({ titulo: this.nomeFornecedorRel(r.fornecedor_id), sub: 'Compras', data: r.data, valorFmt: Utils.fmtMoeda(r.valor_total), onAbrir: () => Compras.abrirFormCompra(r) });
+          const linhaDespesaFin = (r) => ({ titulo: r.categoria || '(despesa)', sub: 'Despesas', data: r.data, valorFmt: Utils.fmtMoeda(r.valor), onAbrir: () => Compras.abrirFormDespesa(r) });
+          const linhaItemCompraFin = (i) => {
+            const c = Api.get('compras', i.compra_id);
+            return { titulo: (produtoById[i.produto_id] && produtoById[i.produto_id].nome) || '(sem produto)', sub: 'Compras', data: c ? c.data : null, valorFmt: Utils.fmtMoeda(Number(i.quantidade || 0) * Number(i.valor_unitario || 0)), onAbrir: () => c && Compras.abrirFormCompra(c) };
+          };
+
+          return `
+            ${anosAsc.length > 1 ? this.barChart('Receita por ano', anosAsc.map(a => [a, receitaPorAno[a]]), Utils.fmtMoeda, (ano) =>
+              this.abrirDetalheLinha('Receita por ano — ' + ano, [
+                ...producao.filter(r => (r.data || '').slice(0, 4) === ano).map(linhaProducao),
+                ...vendas.filter(r => (r.data_venda || '').slice(0, 4) === ano).map(linhaVenda)
+              ])) : ''}
+            ${anosAsc.length > 1 ? this.barChart('Despesa por ano', anosAsc.map(a => [a, despesaPorAno[a]]), Utils.fmtMoeda, (ano) =>
+              this.abrirDetalheLinha('Despesa por ano — ' + ano, [
+                ...compras.filter(r => (r.data || '').slice(0, 4) === ano).map(linhaCompraFin),
+                ...despesas.filter(r => (r.data || '').slice(0, 4) === ano).map(linhaDespesaFin)
+              ])) : ''}
+            ${this.barChart('Receita por mês (últimos 12 meses)', meses.map(m => [this.labelMes(m), receitaPorMes[m]]), Utils.fmtMoeda, (label, idx) => {
+              const mesIso = meses[idx];
+              this.abrirDetalheLinha('Receita em ' + this.labelMes(mesIso), [
+                ...producao.filter(r => (r.data || '').slice(0, 7) === mesIso).map(linhaProducao),
+                ...vendas.filter(r => (r.data_venda || '').slice(0, 7) === mesIso).map(linhaVenda)
+              ]);
+            })}
+            ${this.barChart('Despesa por mês (últimos 12 meses)', meses.map(m => [this.labelMes(m), despesaPorMes[m]]), Utils.fmtMoeda, (label, idx) => {
+              const mesIso = meses[idx];
+              this.abrirDetalheLinha('Despesa em ' + this.labelMes(mesIso), [
+                ...compras.filter(r => (r.data || '').slice(0, 7) === mesIso).map(linhaCompraFin),
+                ...despesas.filter(r => (r.data || '').slice(0, 7) === mesIso).map(linhaDespesaFin)
+              ]);
+            })}
+            ${this.barChart('Receita por fazenda', Object.entries(receitaPorFazenda).sort((a, b) => b[1] - a[1]), Utils.fmtMoeda, (faz) =>
+              this.abrirDetalheLinha('Receita por fazenda — ' + faz, [
+                ...producaoP.filter(r => (r.fazenda || 'Sem fazenda') === faz).map(linhaProducao),
+                ...vendasP.filter(r => (r.fazenda || 'Sem fazenda') === faz).map(linhaVenda)
+              ]))}
+            ${this.barChart('Despesa por fazenda', Object.entries(despesaPorFazenda).sort((a, b) => b[1] - a[1]), Utils.fmtMoeda, (faz) =>
+              this.abrirDetalheLinha('Despesa por fazenda — ' + faz, [
+                ...comprasP.filter(r => (r.fazenda || 'Sem fazenda') === faz).map(linhaCompraFin),
+                ...despesasP.filter(r => (r.fazenda || 'Sem fazenda') === faz).map(linhaDespesaFin)
+              ]))}
+            ${topCategoriasDespesa.length ? this.barChart('Despesa por categoria', topCategoriasDespesa, Utils.fmtMoeda, (cat) =>
+              this.abrirDetalheLinha('Despesa por categoria — ' + cat, [
+                ...despesasP.filter(d => (d.categoria || 'Sem categoria') === cat).map(linhaDespesaFin),
+                ...itensCompra.filter(i => idsComprasP.has(i.compra_id) && ((produtoById[i.produto_id] && produtoById[i.produto_id].categoria) || 'Sem categoria') === cat).map(linhaItemCompraFin)
+              ])) : ''}
+          `;
+        })()}
 
         <div class="toolbar"><div></div><button class="btn btn-ghost" id="btnExportarFinCsv">Exportar resumo financeiro (CSV)</button></div>
       `;
