@@ -301,10 +301,16 @@ const Rebanho = {
         <button class="chip" data-st="Inativo">Inativos</button>
         <button class="chip" data-st="todos">Todos</button>
       </div>
+      <div class="filter-chips" id="filtroAgrupamento">
+        <span class="hint" style="align-self:center;margin-right:4px;">Agrupar por:</span>
+        <button class="chip active" data-ag="especie">Espécie</button>
+        <button class="chip" data-ag="proprietario">Proprietário(a)</button>
+      </div>
       <div id="listaAnimais"></div>`;
 
     let fazendaAtiva = 'todas';
     let statusAtivo = 'Ativo';
+    let agrupamento = 'especie';
 
     const renderCardAnimal = (a) => {
       const stCls = { Ativo: 'green', Vendido: 'orange', Morreu: 'red' }[a.situacao || 'Ativo'] || 'red';
@@ -342,16 +348,8 @@ const Rebanho = {
         return;
       }
 
-      // Agrupa por espécie, na ordem de this.especies, com "Não informada" por último
-      const grupos = {};
-      lista.forEach(a => {
-        const esp = a.especie || 'Não informada';
-        (grupos[esp] = grupos[esp] || []).push(a);
-      });
-      const ordemEspecies = [...this.especies, 'Não informada'];
-      const especiesPresentes = Object.keys(grupos).sort((a, b) => ordemEspecies.indexOf(a) - ordemEspecies.indexOf(b));
-
-      // Bovina ainda é subdividida por categoria (Bezerro(a), Garrote(a), Novilho(a), Boi, Reprodutor, Vaca...)
+      // Bovina ainda é subdividida por categoria (Bezerro(a), Garrote(a), Novilho(a), Boi, Reprodutor, Vaca...) —
+      // só faz sentido dentro do agrupamento por Espécie, já que é a própria espécie que define as categorias.
       const ordemCategoriasBovina = [...this.categoriasPorEspecie.Bovina, 'Sem categoria'];
       const categoriasDe = (esp, animaisEsp) => {
         if (esp !== 'Bovina') return null;
@@ -360,36 +358,60 @@ const Rebanho = {
           const cat = a.categoria || 'Sem categoria';
           (subgrupos[cat] = subgrupos[cat] || []).push(a);
         });
-        return Object.keys(subgrupos).sort((a, b) => ordemCategoriasBovina.indexOf(a) - ordemCategoriasBovina.indexOf(b)).map(cat => ({ cat, itens: subgrupos[cat] }));
+        return Object.keys(subgrupos).sort((a, b) => ordemCategoriasBovina.indexOf(a) - ordemCategoriasBovina.indexOf(b)).map(cat => ({ titulo: cat, itens: subgrupos[cat] }));
       };
 
-      raiz.innerHTML = especiesPresentes.map((esp, i) => {
-        const subgrupos = categoriasDe(esp, grupos[esp]);
-        if (!subgrupos) {
+      // Monta os grupos de 1º nível de acordo com o agrupamento escolhido (chips "Agrupar por").
+      let gruposPrincipais;
+      if (agrupamento === 'proprietario') {
+        const porProp = {};
+        lista.forEach(a => {
+          const prop = a.proprietario_id ? Api.get('proprietarios', a.proprietario_id) : null;
+          const nome = prop ? prop.nome : 'Sem proprietário(a)';
+          (porProp[nome] = porProp[nome] || []).push(a);
+        });
+        const nomes = Object.keys(porProp).sort((a, b) => {
+          if (a === 'Sem proprietário(a)') return 1;
+          if (b === 'Sem proprietário(a)') return -1;
+          return a.localeCompare(b);
+        });
+        gruposPrincipais = nomes.map(nome => ({ titulo: nome, itens: porProp[nome], subgrupos: null }));
+      } else {
+        const grupos = {};
+        lista.forEach(a => {
+          const esp = a.especie || 'Não informada';
+          (grupos[esp] = grupos[esp] || []).push(a);
+        });
+        const ordemEspecies = [...this.especies, 'Não informada'];
+        const especiesPresentes = Object.keys(grupos).sort((a, b) => ordemEspecies.indexOf(a) - ordemEspecies.indexOf(b));
+        gruposPrincipais = especiesPresentes.map(esp => ({ titulo: esp, itens: grupos[esp], subgrupos: categoriasDe(esp, grupos[esp]) }));
+      }
+
+      raiz.innerHTML = gruposPrincipais.map((g, i) => {
+        if (!g.subgrupos) {
           return `
-            <h3 class="section-title">${Utils.escapeHtml(esp)} (${grupos[esp].length})</h3>
-            <div id="grupoEspecie${i}"></div>`;
+            <h3 class="section-title">${Utils.escapeHtml(g.titulo)} (${g.itens.length})</h3>
+            <div id="grupoAnimal${i}"></div>`;
         }
         return `
-          <h3 class="section-title">${Utils.escapeHtml(esp)} (${grupos[esp].length})</h3>
-          ${subgrupos.map((sg, j) => `
-            <h4 style="font-size:13px;font-weight:700;color:var(--text-muted);margin:10px 0 8px;">${Utils.escapeHtml(sg.cat)} (${sg.itens.length})</h4>
-            <div id="grupoEspecie${i}_cat${j}"></div>
+          <h3 class="section-title">${Utils.escapeHtml(g.titulo)} (${g.itens.length})</h3>
+          ${g.subgrupos.map((sg, j) => `
+            <h4 style="font-size:13px;font-weight:700;color:var(--text-muted);margin:10px 0 8px;">${Utils.escapeHtml(sg.titulo)} (${sg.itens.length})</h4>
+            <div id="grupoAnimal${i}_sub${j}"></div>
           `).join('')}`;
       }).join('');
 
-      especiesPresentes.forEach((esp, i) => {
-        const subgrupos = categoriasDe(esp, grupos[esp]);
-        if (!subgrupos) {
-          UI.renderList(raiz.querySelector(`#grupoEspecie${i}`), {
-            data: grupos[esp],
+      gruposPrincipais.forEach((g, i) => {
+        if (!g.subgrupos) {
+          UI.renderList(raiz.querySelector(`#grupoAnimal${i}`), {
+            data: g.itens,
             onCardClick: (a) => this.abrirFormAnimal(a),
             renderCard: renderCardAnimal
           });
           return;
         }
-        subgrupos.forEach((sg, j) => {
-          UI.renderList(raiz.querySelector(`#grupoEspecie${i}_cat${j}`), {
+        g.subgrupos.forEach((sg, j) => {
+          UI.renderList(raiz.querySelector(`#grupoAnimal${i}_sub${j}`), {
             data: sg.itens,
             onCardClick: (a) => this.abrirFormAnimal(a),
             renderCard: renderCardAnimal
@@ -430,6 +452,14 @@ const Rebanho = {
         container.querySelectorAll('#filtroStatusAnimal .chip').forEach(c => c.classList.remove('active'));
         chip.classList.add('active');
         statusAtivo = chip.dataset.st;
+        desenhar();
+      });
+    });
+    container.querySelectorAll('#filtroAgrupamento .chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        container.querySelectorAll('#filtroAgrupamento .chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        agrupamento = chip.dataset.ag;
         desenhar();
       });
     });
