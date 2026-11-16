@@ -268,7 +268,7 @@ const Rebanho = {
           valueField: 'id', labelFn: a => a.nome
         },
         criarNovo: { label: `Nov${artigo} ${label.toLowerCase()} (cadastrar animal)...`, abrir: () => {
-          this.abrirFormAnimal(null, { especie: destino.especie, sexo, fazenda: destino.fazenda }, async (novo) => {
+          this.abrirFormAnimal(null, { especie: destino.especie, sexo, fazenda: destino.fazenda, _semOrigemEntrada: true }, async (novo) => {
             await Api.atualizar('animais', destino.id, { [campo]: novo.id });
             Utils.toast(`${label} cadastrad${artigo} e vinculad${artigo}.`);
             this.abrirArvoreGenealogica(animalOriginal);
@@ -465,10 +465,17 @@ const Rebanho = {
 
   abrirFormAnimal(animal, dadosIniciais, onCriado) {
     const especieAtual = (animal && animal.especie) || (dadosIniciais && dadosIniciais.especie) || 'Bovina';
+    // Cadastro de ancestral (árvore genealógica) ou de bezerro(a) vindo de um parto já tem
+    // sua própria origem conhecida — só o cadastro avulso de "+ Novo" precisa perguntar.
+    const perguntarOrigem = !animal && !(dadosIniciais && dadosIniciais._semOrigemEntrada);
     const schema = [
       { key: 'nome', label: 'Nome/Brinco', type: 'text', required: true },
       { key: 'especie', label: 'Espécie', type: 'select', required: true, options: this.especies.map(e => ({ value: e, label: e })) },
       { key: 'sexo', label: 'Sexo', type: 'select', options: [{ value: 'M', label: 'Macho (M)' }, { value: 'F', label: 'Fêmea (F)' }] },
+      ...(perguntarOrigem ? [
+        { key: 'origemEntrada', label: 'Origem', type: 'select', options: [{ value: 'Nascimento', label: 'Nascimento na propriedade' }, { value: 'Compra', label: 'Compra' }, { value: 'Outro', label: 'Outro' }] },
+        { key: 'dataEntrada', label: 'Data da entrada/compra', type: 'date' }
+      ] : []),
       { key: 'categoria', label: 'Categoria', type: 'text', suggestions: this.categoriasSugestao(especieAtual) },
       { key: 'raca', label: 'Raça', type: 'text', suggestions: this.racasSugestao },
       { key: 'classe_fiscal', label: 'Classe fiscal (Inventário SEFAZ-TO)', type: 'text', suggestions: this.classesFiscais },
@@ -491,7 +498,7 @@ const Rebanho = {
     UI.abrirFormulario({
       titulo: animal ? 'Editar animal' : ((dadosIniciais && dadosIniciais.mae_id) ? `Novo animal (dados herdados de ${this.nomeAnimal(dadosIniciais.mae_id)})` : 'Novo animal'),
       schema,
-      dados: animal || dadosIniciais || { situacao: 'Ativo', classe_fiscal: 'Comum' },
+      dados: animal || dadosIniciais || { situacao: 'Ativo', classe_fiscal: 'Comum', origemEntrada: 'Nascimento', dataEntrada: Utils.hoje() },
       onRender: (box) => {
         const campoEspecie = box.querySelector('[name="especie"]');
         const campoSexo = box.querySelector('[name="sexo"]');
@@ -564,6 +571,10 @@ const Rebanho = {
       onSalvar: async (dados) => {
         if (!dados.mae_id) delete dados.mae_id;
         if (!dados.pai_id) delete dados.pai_id;
+        const origemEntrada = dados.origemEntrada;
+        const dataEntrada = dados.dataEntrada;
+        delete dados.origemEntrada;
+        delete dados.dataEntrada;
         // Regras automáticas: morte sempre vira situação "Morreu"; venda de um(a) bezerro(a)
         // que ainda não tinha desmame registrado assume o desmame na data da venda.
         const situacaoAnterior = animal ? (animal.situacao || 'Ativo') : null;
@@ -577,6 +588,17 @@ const Rebanho = {
         } else {
           const novo = await Api.criar('animais', dados);
           if (onCriado) await onCriado(novo);
+          // Cadastro avulso de um animal comprado precisa deixar o mesmo rastro em
+          // Movimentações que uma saída deixa — senão a entrada nunca aparece lá.
+          if (origemEntrada === 'Compra') {
+            await Api.criar('mov_rebanho', {
+              animal_id: novo.id,
+              data: dataEntrada || Utils.hoje(),
+              tipo: 'Entrada',
+              motivo: 'Compra',
+              fazenda: dados.fazenda
+            });
+          }
         }
         // Marcar um animal já cadastrado como Vendido/Morreu direto por aqui (sem passar pelo
         // formulário de Movimentação) precisa deixar o mesmo rastro em Movimentações — senão a
@@ -661,7 +683,8 @@ const Rebanho = {
             sexo: dados.sexo_bezerro,
             nascimento: dados.data_parto,
             mae_id: dados.mae_id,
-            situacao: 'Ativo'
+            situacao: 'Ativo',
+            _semOrigemEntrada: true
           }), async (novoAnimal) => {
             // liga o parto ao cadastro do bezerro, assim renomeá-lo depois atualiza aqui sozinho
             await Api.atualizar('partos', partoSalvo.id, { bezerro_id: novoAnimal.id });
@@ -1326,7 +1349,10 @@ const Rebanho = {
         observacao: `Lançado automaticamente a partir da GTA ${gta.gta_numero}. Idade estimada pela faixa etária da GTA — edite o nome/brinco e a data de nascimento quando souber os dados exatos.`
       };
       if (especie === 'Bovina') dados.categoria = this.categoriaAutomaticaBovina(nascimento, item.sexo);
-      criacoes.push(Api.criar('animais', dados));
+      criacoes.push(Api.criar('animais', dados).then((novo) => Api.criar('mov_rebanho', {
+        animal_id: novo.id, data: gta.data, tipo: 'Entrada', motivo: 'Compra', fazenda: gta.fazenda,
+        observacao: `Gerado a partir da GTA ${gta.gta_numero}${gta.gta_serie ? '/' + gta.gta_serie : ''}.`
+      })));
     }
     await Promise.all(criacoes);
     Utils.toast(`${item.quantidade_real} animal(is) criado(s) no Rebanho a partir da GTA (idade estimada — edite os registros pra ajustar nome/brinco).`);
@@ -1373,7 +1399,11 @@ const Rebanho = {
           observacao: linha['observacao'] || `Lançado a partir da GTA ${gta.gta_numero} (planilha de lote).`
         };
         if (especie === 'Bovina') dados.categoria = this.categoriaAutomaticaBovina(nascimento, item.sexo);
-        await Api.criar('animais', dados);
+        const novo = await Api.criar('animais', dados);
+        await Api.criar('mov_rebanho', {
+          animal_id: novo.id, data: gta.data, tipo: 'Entrada', motivo: 'Compra', fazenda: gta.fazenda,
+          observacao: `Gerado a partir da GTA ${gta.gta_numero}${gta.gta_serie ? '/' + gta.gta_serie : ''} (planilha de lote).`
+        });
       }
       Utils.toast(`${linhas.length} animal(is) cadastrado(s) no Rebanho.`);
     } else {
