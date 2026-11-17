@@ -98,6 +98,23 @@ const Api = {
           .then(r => { if (!r.ok) throw new Error(t + ': ' + r.status); return r.json(); })
       ));
       TABELAS.forEach((t, i) => { this.cache[t] = resultados[i]; });
+      // Rede de segurança extra: qualquer coisa que ainda esteja na fila de sincronização (não
+      // confirmada pelo servidor) tem que continuar visível depois desse recarregamento completo
+      // — senão uma criação/edição pendente que o servidor ainda não processou desaparece da
+      // tela até a fila terminar de subir (ou, numa falha, até o usuário corrigir e reenviar).
+      this.outbox.forEach((item) => {
+        if (item.op === 'create') {
+          if (!this.get(item.tabela, item.id)) {
+            this.cache[item.tabela] = this.cache[item.tabela] || [];
+            this.cache[item.tabela].unshift(Object.assign({ created_at: new Date().toISOString(), _pendente: true }, item.payload));
+          }
+        } else if (item.op === 'update') {
+          const local = this.get(item.tabela, item.id);
+          if (local) Object.assign(local, item.payload, { _pendente: true });
+        } else if (item.op === 'delete') {
+          this.cache[item.tabela] = (this.cache[item.tabela] || []).filter(r => String(r.id) !== String(item.id));
+        }
+      });
       this.salvarCache();
       this.ultimaSync = new Date().toISOString();
       localStorage.setItem('capatazUltimaSync', this.ultimaSync);
@@ -174,13 +191,25 @@ const Api = {
 
   /* ---------- Sincronização da fila com o Supabase ---------- */
   sincronizando: false,
+  sincronizacaoEmAndamento: null,
 
+  // Se já existe uma sincronização rodando, PRECISA esperar ela terminar em vez de simplesmente
+  // desistir — senão quem chamou (ex: o botão "Sincronizar agora", que faz sincronizar() seguido
+  // de carregarTudo()) segue pro carregarTudo() achando que já sincronizou, enquanto o POST do
+  // item mais recente (disparado pelo próprio Api.criar(), sem esperar) ainda está em voo. O
+  // carregarTudo() então sobrescreve o cache com uma versão do servidor sem esse item ainda, e
+  // ele desaparece da tela até a sincronização original terminar (e, nem sempre, volta sozinho).
   async sincronizar() {
-    if (this.sincronizando) return;
+    if (this.sincronizacaoEmAndamento) return this.sincronizacaoEmAndamento;
     if (!this.configurado()) return;
     if (!navigator.onLine) return;
     if (!this.outbox.length) return;
 
+    this.sincronizacaoEmAndamento = this._sincronizarAgora().finally(() => { this.sincronizacaoEmAndamento = null; });
+    return this.sincronizacaoEmAndamento;
+  },
+
+  async _sincronizarAgora() {
     this.sincronizando = true;
     // Processa a fila inteira em vez de parar no primeiro erro: um único item com problema
     // (ex: um valor inválido) não pode travar a sincronização dos outros pra sempre. Itens que
