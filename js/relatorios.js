@@ -194,7 +194,9 @@ const Relatorios = {
 
   /* ---------- Relatório: Compras ---------- */
   renderCompras(container) {
-    const compras = Api.list('compras');
+    // Compra com "Lançar no Financeiro" desmarcado (ex: duplicada de uma GTA de compra do
+    // Rebanho) é só histórico — não entra em nenhum total/gráfico financeiro.
+    const compras = Api.list('compras').filter(c => c.considerar_saida !== false);
     const itens = Api.list('itens_compra');
     const produtos = Api.list('produtos');
     const fornecedores = Api.list('fornecedores');
@@ -331,7 +333,7 @@ const Relatorios = {
   renderFinanceiro(container) {
     const producao = Api.list('producao');
     const vendas = Api.list('vendas');
-    const compras = Api.list('compras');
+    const compras = Api.list('compras').filter(c => c.considerar_saida !== false);
     const despesas = Api.list('despesas').filter(d => d.status !== 'Planejado' && d.status !== 'Cancelado');
 
     const anos = Array.from(new Set([

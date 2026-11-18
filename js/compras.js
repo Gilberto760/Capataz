@@ -18,6 +18,9 @@ const Compras = {
   // filtroExtra é um predicado opcional aplicado antes (ex: excluir despesas Planejado/Cancelado).
   _somaPeriodo(tabela, campoData, campoValor, { ano, mes, filtroExtra } = {}) {
     let lista = Api.list(tabela);
+    // Uma compra com "Lançar no Financeiro" desmarcado (ex: compra de animais já lançada pela
+    // GTA no Rebanho) existe só como registro/histórico — não pode entrar em nenhum total.
+    if (tabela === 'compras') lista = lista.filter(r => r.considerar_saida !== false);
     if (filtroExtra) lista = lista.filter(filtroExtra);
     if (mes) lista = lista.filter(r => (r[campoData] || '').slice(0, 7) === mes);
     else if (ano) lista = lista.filter(r => (r[campoData] || '').slice(0, 4) === ano);
@@ -344,7 +347,7 @@ const Compras = {
         ? (nomesItens.length > 2 ? nomesItens.slice(0, 2).join(', ') + ` e mais ${nomesItens.length - 2}` : nomesItens.join(', '))
         : `${itens.length} item(ns)`;
       return `
-        <div class="rec-title">${Utils.escapeHtml(this.nomeFornecedor(r.fornecedor_id))} ${r._pendente ? UI.badge('Pendente', 'orange') : ''}</div>
+        <div class="rec-title">${Utils.escapeHtml(this.nomeFornecedor(r.fornecedor_id))} ${r._pendente ? UI.badge('Pendente', 'orange') : ''} ${r.considerar_saida === false ? UI.badge('Não contabilizado no Financeiro', 'blue') : ''}</div>
         <div class="rec-sub">${Utils.escapeHtml(r.tipo || '-')} · ${Utils.escapeHtml(resumoItens)}</div>
         <div class="rec-row">
           <span>${Utils.fmtData(r.data)}</span>
@@ -378,7 +381,7 @@ const Compras = {
 
       raiz.innerHTML = anosOrdenados.map(ano => {
         const doAno = porAno[ano];
-        const totalAno = doAno.reduce((s, r) => s + Number(r.valor_total || 0), 0);
+        const totalAno = doAno.filter(r => r.considerar_saida !== false).reduce((s, r) => s + Number(r.valor_total || 0), 0);
         const anoAberto = anosAbertos.has(ano);
 
         let html = `
@@ -396,7 +399,7 @@ const Compras = {
           const centrosOrdenados = Object.keys(porCentro).sort((a, b) => a.localeCompare(b));
           html += centrosOrdenados.map((centro, j) => {
             const doCentro = porCentro[centro];
-            const totalCentro = doCentro.reduce((s, r) => s + Number(r.valor_total || 0), 0);
+            const totalCentro = doCentro.filter(r => r.considerar_saida !== false).reduce((s, r) => s + Number(r.valor_total || 0), 0);
             const chave = ano + '||' + centro;
             const centroAberto = centrosAbertos.has(chave);
             let h = `
@@ -484,7 +487,7 @@ const Compras = {
       { key: 'centro_de_custo', label: 'Centro de Custo', type: 'text', suggestions: Cadastros.centrosCustoConhecidos() },
       { key: 'frete', label: 'Frete (R$)', type: 'number', step: '0.01' },
       { key: 'desconto', label: 'Desconto (R$)', type: 'number', step: '0.01' },
-      { key: 'considerar_saida', label: 'Considerar como saída financeira', type: 'checkbox' },
+      { key: 'considerar_saida', label: 'Lançar no Financeiro (desmarque se essa compra já foi lançada em outro lugar, ex: compra de animais via GTA no Rebanho)', type: 'checkbox' },
       { key: 'irpf', label: 'Dedutível no IRPF', type: 'checkbox' },
       { key: 'observacao', label: 'Observação', type: 'textarea' }
     ];
