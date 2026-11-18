@@ -1002,7 +1002,7 @@ const Rebanho = {
         const totalLegal = itens.reduce((s, i) => s + Number(i.quantidade_legal || 0), 0);
         const contraparte = r.tipo === 'Compra' ? r.origem_nome : r.destino_nome;
         return `
-        <div class="rec-title">${Utils.escapeHtml(r.tipo)} ${UI.badge(`${itens.length} lote(s)`, r.tipo === 'Compra' ? 'green' : 'orange')} ${r.anexo_url ? '📎' : ''} ${r._pendente ? UI.badge('Pendente', 'orange') : ''}</div>
+        <div class="rec-title">${Utils.escapeHtml(r.tipo)} ${UI.badge(`${itens.length} lote(s)`, r.tipo === 'Compra' ? 'green' : 'orange')} ${r.anexo_url ? '📎GTA' : ''} ${r.nf_anexo_url ? '📎NF' : ''} ${r._pendente ? UI.badge('Pendente', 'orange') : ''}</div>
         <div class="rec-sub">GTA ${Utils.escapeHtml(r.gta_numero || '-')}${r.gta_serie ? '/' + Utils.escapeHtml(r.gta_serie) : ''} · ${Utils.escapeHtml(r.fazenda || '-')} · ${Utils.escapeHtml(contraparte || '-')}</div>
         <div class="rec-row">
           <span>${Utils.fmtData(r.data)}</span>
@@ -1013,39 +1013,41 @@ const Rebanho = {
     });
   },
 
-  // Monta a área de anexo (PDF da GTA/outra imagem) dentro de um form já aberto pelo
-  // UI.abrirFormulario. Usa dois campos ocultos do schema (anexo_url/anexo_nome) só pra
-  // aproveitar a serialização automática do form — a parte visual é toda feita aqui.
-  _montarCampoAnexoGta(form) {
-    const campoUrl = form.querySelector('[name="anexo_url"]');
-    const campoNome = form.querySelector('[name="anexo_nome"]');
+  // Monta UMA área de anexo (PDF/imagem) dentro de um form já aberto pelo UI.abrirFormulario.
+  // Usa dois campos ocultos do schema (chaveUrl/chaveNome) só pra aproveitar a serialização
+  // automática do form — a parte visual é toda feita aqui. Chamada uma vez pra cada anexo que a
+  // tela precisar (GTA e a Nota Fiscal são anexos independentes, cada um com seu próprio slot).
+  _montarCampoAnexo(form, { chaveUrl, chaveNome, label, textoBotao, inserirApos }) {
+    const campoUrl = form.querySelector(`[name="${chaveUrl}"]`);
+    const campoNome = form.querySelector(`[name="${chaveNome}"]`);
     const grupoUrl = campoUrl.closest('.form-group');
     const grupoNome = campoNome.closest('.form-group');
     grupoUrl.style.display = 'none';
     grupoNome.style.display = 'none';
 
+    const idBase = 'anexo_' + chaveUrl;
     const secao = document.createElement('div');
     secao.className = 'form-group';
     secao.innerHTML = `
-      <label>Anexo</label>
-      <input type="file" id="inputAnexoGta" accept=".pdf,.jpg,.jpeg,.png,.webp" style="display:none;"/>
-      <div id="anexoAtualGta"></div>
-      <button type="button" class="btn btn-ghost" id="btnEnviarAnexoGta" style="width:100%;">📎 Anexar documento (PDF da GTA, foto, etc.)</button>
+      <label>${Utils.escapeHtml(label)}</label>
+      <input type="file" id="input_${idBase}" accept=".pdf,.jpg,.jpeg,.png,.webp" style="display:none;"/>
+      <div id="atual_${idBase}"></div>
+      <button type="button" class="btn btn-ghost" id="btn_${idBase}" style="width:100%;">📎 ${Utils.escapeHtml(textoBotao)}</button>
     `;
-    grupoNome.parentNode.insertBefore(secao, grupoNome.nextSibling);
+    (inserirApos || grupoNome).parentNode.insertBefore(secao, (inserirApos || grupoNome).nextSibling);
 
-    const elAtual = secao.querySelector('#anexoAtualGta');
-    const btnEnviar = secao.querySelector('#btnEnviarAnexoGta');
-    const inputArquivo = secao.querySelector('#inputAnexoGta');
+    const elAtual = secao.querySelector(`#atual_${idBase}`);
+    const btnEnviar = secao.querySelector(`#btn_${idBase}`);
+    const inputArquivo = secao.querySelector(`#input_${idBase}`);
 
     const atualizar = () => {
       if (!campoUrl.value) { elAtual.innerHTML = ''; return; }
       elAtual.innerHTML = `
         <div class="rec-row" style="justify-content:space-between;align-items:center;padding:8px 0;">
           <a href="${Utils.escapeHtml(campoUrl.value)}" target="_blank" rel="noopener">📄 ${Utils.escapeHtml(campoNome.value || 'arquivo anexado')}</a>
-          <button type="button" class="btn btn-ghost" id="btnRemoverAnexoGta" style="padding:4px 8px;">🗑️</button>
+          <button type="button" class="btn btn-ghost" id="btnRemover_${idBase}" style="padding:4px 8px;">🗑️</button>
         </div>`;
-      elAtual.querySelector('#btnRemoverAnexoGta').addEventListener('click', async () => {
+      elAtual.querySelector(`#btnRemover_${idBase}`).addEventListener('click', async () => {
         if (!Utils.confirmar('Remover o anexo?')) return;
         const prefixo = `${Api.cfg.url}/storage/v1/object/public/anexos/`;
         if (campoUrl.value.startsWith(prefixo)) await Api.excluirAnexo('anexos', campoUrl.value.slice(prefixo.length));
@@ -1076,6 +1078,23 @@ const Rebanho = {
       btnEnviar.disabled = false;
       inputArquivo.value = '';
     });
+    return secao;
+  },
+
+  // Monta os dois anexos independentes da tela de Compra/Venda GTA: o documento da GTA e a
+  // Nota Fiscal da compra/venda — cada um com seu próprio arquivo, já que são documentos
+  // diferentes (a GTA é emitida pela ADAPEC, a NF pelo fornecedor/comprador).
+  _montarAnexosGta(form) {
+    const secaoGta = this._montarCampoAnexo(form, {
+      chaveUrl: 'anexo_url', chaveNome: 'anexo_nome',
+      label: 'Anexo — GTA', textoBotao: 'Anexar documento da GTA (PDF, foto, etc.)',
+      inserirApos: form.querySelector('[name="anexo_nome"]').closest('.form-group')
+    });
+    this._montarCampoAnexo(form, {
+      chaveUrl: 'nf_anexo_url', chaveNome: 'nf_anexo_nome',
+      label: 'Anexo — Nota Fiscal', textoBotao: 'Anexar Nota Fiscal da compra/venda (PDF, foto, etc.)',
+      inserirApos: secaoGta
+    });
   },
 
   // opcoes (só quando reg é null, pra manter os itens já lançados se reabrir o formulário
@@ -1105,11 +1124,14 @@ const Rebanho = {
       { key: 'destino_nome', label: 'Destino — Nome/Produtor', type: 'text' },
       { key: 'destino_municipio', label: 'Destino — Município', type: 'text', suggestions: this.municipiosConhecidos() },
       { key: 'observacao', label: 'Observação', type: 'textarea' },
-      // Campos ocultos: guardam o anexo (URL + nome do arquivo no Supabase Storage). A tela de
-      // upload de verdade é montada à mão no onRender, mas usar o schema normal pra esses dois
-      // campos faz o form.onSalvar já pegar e salvar os valores automaticamente, sem código extra.
-      { key: 'anexo_url', label: 'Anexo (URL)', type: 'text' },
-      { key: 'anexo_nome', label: 'Anexo (nome do arquivo)', type: 'text' }
+      // Campos ocultos: guardam os dois anexos (URL + nome do arquivo no Supabase Storage) — a
+      // GTA e a Nota Fiscal são documentos independentes. A tela de upload de verdade é montada
+      // à mão no onRender, mas usar o schema normal pra esses campos faz o form.onSalvar já
+      // pegar e salvar os valores automaticamente, sem código extra.
+      { key: 'anexo_url', label: 'Anexo GTA (URL)', type: 'text' },
+      { key: 'anexo_nome', label: 'Anexo GTA (nome do arquivo)', type: 'text' },
+      { key: 'nf_anexo_url', label: 'Anexo Nota Fiscal (URL)', type: 'text' },
+      { key: 'nf_anexo_nome', label: 'Anexo Nota Fiscal (nome do arquivo)', type: 'text' }
     ];
     UI.abrirFormulario({
       titulo: reg ? 'Editar compra/venda (GTA)' : 'Nova compra/venda (GTA)',
@@ -1174,7 +1196,7 @@ const Rebanho = {
           });
         });
 
-        this._montarCampoAnexoGta(form);
+        this._montarAnexosGta(form);
       },
       onSalvar: async (dados) => {
         if (reg) {
