@@ -967,28 +967,49 @@ const Rebanho = {
     });
 
     container.querySelector('#btnAjustarAdapec').addEventListener('click', () => {
+      // Uma tabela com Machos/Fêmeas lado a lado (em vez de 12 campos empilhados do form
+      // genérico) deixa o ajuste rápido de olhar e preencher — é basicamente a mesma tabela
+      // Real/Legal de cima, só que editável.
       const base = ajustesManuais || ultimoResumoBovina.faixas;
-      const schema = [];
-      ordem.forEach(k => {
-        schema.push({ key: 'm_' + k, label: `${labelFaixa[k]} — Machos`, type: 'number' });
-        schema.push({ key: 'f_' + k, label: `${labelFaixa[k]} — Fêmeas`, type: 'number' });
-      });
-      const dadosIniciais = {};
-      ordem.forEach(k => { dadosIniciais['m_' + k] = base[k].M; dadosIniciais['f_' + k] = base[k].F; });
-      UI.abrirFormulario({
+      const html = `
+        <table class="tabela-ajuste-adapec" id="tabelaAjusteAdapec">
+          <thead><tr><th>Faixa etária</th><th>Machos</th><th>Fêmeas</th></tr></thead>
+          <tbody>
+            ${ordem.map(k => `
+              <tr>
+                <td>${Utils.escapeHtml(labelFaixa[k])}</td>
+                <td><input type="number" inputmode="numeric" class="input-ajuste-adapec" data-ajuste-m="${k}" value="${base[k].M}"/></td>
+                <td><input type="number" inputmode="numeric" class="input-ajuste-adapec" data-ajuste-f="${k}" value="${base[k].F}"/></td>
+              </tr>`).join('')}
+          </tbody>
+          <tfoot>
+            <tr style="font-weight:700;"><td>Total</td><td id="totalAjusteM">-</td><td id="totalAjusteF">-</td></tr>
+          </tfoot>
+        </table>`;
+      const box = UI.abrirInfo({
         titulo: 'Ajustar valores da declaração (Bovina)',
-        schema,
-        dados: dadosIniciais,
-        onSalvar: async (dados) => {
-          const novasFaixas = faixaVazia();
-          ordem.forEach(k => {
-            novasFaixas[k].M = Number(dados['m_' + k]) || 0;
-            novasFaixas[k].F = Number(dados['f_' + k]) || 0;
-          });
-          ajustesManuais = novasFaixas;
-          Utils.toast('Valores ajustados — não esqueça de salvar a declaração.');
-          desenhar();
-        }
+        html,
+        acoes: `<button type="button" class="btn btn-primary" id="btnSalvarAjusteAdapec">Salvar</button>`
+      });
+      const atualizarTotais = () => {
+        let totalM = 0, totalF = 0;
+        box.querySelectorAll('[data-ajuste-m]').forEach(i => { totalM += Number(i.value) || 0; });
+        box.querySelectorAll('[data-ajuste-f]').forEach(i => { totalF += Number(i.value) || 0; });
+        box.querySelector('#totalAjusteM').textContent = totalM;
+        box.querySelector('#totalAjusteF').textContent = totalF;
+      };
+      box.querySelectorAll('.input-ajuste-adapec').forEach(i => i.addEventListener('input', atualizarTotais));
+      atualizarTotais();
+      box.querySelector('#btnSalvarAjusteAdapec').addEventListener('click', () => {
+        const novasFaixas = faixaVazia();
+        ordem.forEach(k => {
+          novasFaixas[k].M = Number(box.querySelector(`[data-ajuste-m="${k}"]`).value) || 0;
+          novasFaixas[k].F = Number(box.querySelector(`[data-ajuste-f="${k}"]`).value) || 0;
+        });
+        ajustesManuais = novasFaixas;
+        document.getElementById('modalOverlay').classList.remove('open');
+        Utils.toast('Valores ajustados — não esqueça de salvar a declaração.');
+        desenhar();
       });
     });
 

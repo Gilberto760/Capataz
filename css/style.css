@@ -217,6 +217,11 @@ body {
 .tabela-evolucao th, .tabela-evolucao td { padding:6px 8px; text-align:right; border-bottom:1px solid var(--border); }
 .tabela-evolucao th:first-child, .tabela-evolucao td:first-child { text-align:left; }
 .tabela-evolucao thead th { font-weight:600; color:var(--muted, #666); }
+.input-ajuste-adapec { width:70px; padding:6px 8px; border-radius:8px; border:1px solid var(--border); text-align:right; font-size:14px; }
+.tabela-ajuste-adapec { width:100%; border-collapse: collapse; font-size:13px; }
+.tabela-ajuste-adapec th, .tabela-ajuste-adapec td { padding:6px 8px; text-align:right; border-bottom:1px solid var(--border); }
+.tabela-ajuste-adapec th:first-child, .tabela-ajuste-adapec td:first-child { text-align:left; }
+.tabela-ajuste-adapec thead th { font-weight:600; color:var(--text-muted); }
 
 /* ---------- Grade de 2 colunas em telas largas (ADAPEC, Inventário SEFAZ...) ---------- */
 .grid-2col { display:grid; grid-template-columns: 1fr; gap:0 20px; }
