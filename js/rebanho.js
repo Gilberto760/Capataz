@@ -815,13 +815,21 @@ const Rebanho = {
         ${fazendas.map(f => `<button class="chip" data-fz="${Utils.escapeHtml(f)}">${Utils.escapeHtml(f)}</button>`).join('')}
       </div>
       <div id="resumoAdapec"></div>
-      <div class="toolbar"><div></div><button class="btn btn-primary" id="btnSalvarAdapec">Salvar declaração de hoje</button></div>
+      <div class="toolbar">
+        <button class="btn btn-ghost" id="btnAjustarAdapec">✏️ Ajustar valores manualmente</button>
+        <button class="btn btn-primary" id="btnSalvarAdapec">Salvar declaração de hoje</button>
+      </div>
       <h3 class="section-title">Declarações anteriores</h3>
       <div id="listaAdapec"></div>
     `;
 
     let fazendaAtiva = 'todas';
     let ultimoResumoBovina = null;
+    // Quando ADAPEC e o produtor acertam números diferentes do que o sistema calculou
+    // sozinho (ex: contagem física no curral bateu diferente da data de nascimento cadastrada),
+    // esse ajuste manual passa a valer tanto na tela quanto na declaração salva — até o usuário
+    // desfazer ou trocar o filtro de fazenda (que muda a base de cálculo).
+    let ajustesManuais = null;
 
     const faixaVazia = () => ({ '0_2': { M: 0, F: 0 }, '3_8': { M: 0, F: 0 }, '9_12': { M: 0, F: 0 }, '13_24': { M: 0, F: 0 }, '25_36': { M: 0, F: 0 }, '36_mais': { M: 0, F: 0 } });
 
@@ -866,13 +874,15 @@ const Rebanho = {
       const especiesOrdenadas = Object.keys(porEspecie).sort();
       ultimoResumoBovina = porEspecie['Bovina'] || { faixas: faixaVazia(), semIdade: { M: 0, F: 0 } };
       const legalBovina = calcularLegal();
+      const faixasBovinaExibidas = ajustesManuais || ultimoResumoBovina.faixas;
 
       container.querySelector('#resumoAdapec').innerHTML = especiesOrdenadas.length ? `<div class="grid-2col">${especiesOrdenadas.map(esp => {
         const dados = porEspecie[esp];
         const ehBovina = esp === 'Bovina';
+        const faixasExibir = ehBovina ? faixasBovinaExibidas : dados.faixas;
         let totalM = 0, totalF = 0, totalLegalM = 0, totalLegalF = 0;
         ordem.forEach(k => {
-          totalM += dados.faixas[k].M; totalF += dados.faixas[k].F;
+          totalM += faixasExibir[k].M; totalF += faixasExibir[k].F;
           if (ehBovina) { totalLegalM += legalBovina[k].M; totalLegalF += legalBovina[k].F; }
         });
         const semIdadeTotal = dados.semIdade.M + dados.semIdade.F;
@@ -888,11 +898,16 @@ const Rebanho = {
         return `
           <div class="adapec-card">
             <h3 class="section-title">${Utils.escapeHtml(esp)} — ${totalM + totalF} ativo(s)${ehBovina ? ' · declaração ADAPEC' : ''}</h3>
+            ${ehBovina && ajustesManuais ? `
+            <div class="rec-row" style="justify-content:space-between;align-items:center;padding-bottom:8px;">
+              <span style="color:var(--blue-600);font-weight:600;">✏️ Valores ajustados manualmente</span>
+              <button type="button" class="btn btn-ghost" id="btnDesfazerAjusteAdapec" style="padding:4px 8px;">Desfazer</button>
+            </div>` : ''}
             <div class="bar-chart">
               ${ehBovina ? linhaAdapec('', 'Real', 'Legal (GTA)', 'padding-bottom:4px;font-size:12px;color:var(--text-muted);') : ''}
               ${ordem.map(k => linhaAdapec(
                 labelFaixa[k],
-                ehBovina ? `M:${dados.faixas[k].M} F:${dados.faixas[k].F}` : `M: <b>${dados.faixas[k].M}</b> &nbsp; F: <b>${dados.faixas[k].F}</b>`,
+                ehBovina ? `M:${faixasExibir[k].M} F:${faixasExibir[k].F}` : `M: <b>${faixasExibir[k].M}</b> &nbsp; F: <b>${faixasExibir[k].F}</b>`,
                 `M:${legalBovina[k].M} F:${legalBovina[k].F}`,
                 'padding:6px 0;border-bottom:1px solid var(--border)'
               )).join('')}
@@ -914,12 +929,16 @@ const Rebanho = {
           </div>`;
       }).join('')}</div>` : '<div class="empty-state">Nenhum animal ativo encontrado.</div>';
 
+      const btnDesfazer = container.querySelector('#btnDesfazerAjusteAdapec');
+      if (btnDesfazer) btnDesfazer.addEventListener('click', () => { ajustesManuais = null; desenhar(); });
+
       const historico = Api.list('adapec_declaracoes').sort((a, b) => (b.data || '').localeCompare(a.data || ''));
       UI.renderList(container.querySelector('#listaAdapec'), {
         data: historico,
         emptyText: 'Nenhuma declaração salva ainda.',
+        onCardClick: (r) => this.abrirDetalheAdapec(r),
         renderCard: (r) => `
-          <div class="rec-title">${Utils.fmtData(r.data)} ${r.fazenda ? UI.badge(r.fazenda, 'blue') : ''}</div>
+          <div class="rec-title">${Utils.fmtData(r.data)} ${r.fazenda ? UI.badge(r.fazenda, 'blue') : ''} ${r.ajustado_manualmente ? UI.badge('Ajustada', 'blue') : ''}</div>
           <div class="rec-row">
             <span>Total: ${r.total ?? '-'}</span><span>Machos: ${r.total_m ?? '-'}</span><span>Fêmeas: ${r.total_f ?? '-'}</span>
             <button class="btn btn-danger" data-stop data-excluir-adapec="${r.id}" style="padding:6px 10px;">Excluir</button>
@@ -940,12 +959,41 @@ const Rebanho = {
         container.querySelectorAll('#filtroFazendaAdapec .chip').forEach(c => c.classList.remove('active'));
         chip.classList.add('active');
         fazendaAtiva = chip.dataset.fz;
+        // A fazenda ativa muda a base de cálculo inteira — um ajuste manual feito pra outro
+        // filtro não faz mais sentido aqui, então reseta em vez de arrastar valores errados.
+        ajustesManuais = null;
         desenhar();
       });
     });
 
+    container.querySelector('#btnAjustarAdapec').addEventListener('click', () => {
+      const base = ajustesManuais || ultimoResumoBovina.faixas;
+      const schema = [];
+      ordem.forEach(k => {
+        schema.push({ key: 'm_' + k, label: `${labelFaixa[k]} — Machos`, type: 'number' });
+        schema.push({ key: 'f_' + k, label: `${labelFaixa[k]} — Fêmeas`, type: 'number' });
+      });
+      const dadosIniciais = {};
+      ordem.forEach(k => { dadosIniciais['m_' + k] = base[k].M; dadosIniciais['f_' + k] = base[k].F; });
+      UI.abrirFormulario({
+        titulo: 'Ajustar valores da declaração (Bovina)',
+        schema,
+        dados: dadosIniciais,
+        onSalvar: async (dados) => {
+          const novasFaixas = faixaVazia();
+          ordem.forEach(k => {
+            novasFaixas[k].M = Number(dados['m_' + k]) || 0;
+            novasFaixas[k].F = Number(dados['f_' + k]) || 0;
+          });
+          ajustesManuais = novasFaixas;
+          Utils.toast('Valores ajustados — não esqueça de salvar a declaração.');
+          desenhar();
+        }
+      });
+    });
+
     container.querySelector('#btnSalvarAdapec').addEventListener('click', async () => {
-      const faixas = ultimoResumoBovina.faixas;
+      const faixas = ajustesManuais || ultimoResumoBovina.faixas;
       let totalM = 0, totalF = 0;
       ordem.forEach(k => { totalM += faixas[k].M; totalF += faixas[k].F; });
       const semIdade = ultimoResumoBovina.semIdade.M + ultimoResumoBovina.semIdade.F;
@@ -956,6 +1004,7 @@ const Rebanho = {
       await Api.criar('adapec_declaracoes', {
         data: Utils.hoje(),
         fazenda: fazendaAtiva === 'todas' ? null : fazendaAtiva,
+        ajustado_manualmente: !!ajustesManuais,
         m_0_2: faixas['0_2'].M, f_0_2: faixas['0_2'].F,
         m_3_8: faixas['3_8'].M, f_3_8: faixas['3_8'].F,
         m_9_12: faixas['9_12'].M, f_9_12: faixas['9_12'].F,
@@ -964,11 +1013,37 @@ const Rebanho = {
         m_36_mais: faixas['36_mais'].M, f_36_mais: faixas['36_mais'].F,
         total_m: totalM, total_f: totalF, total: totalM + totalF
       });
+      ajustesManuais = null;
       Utils.toast(semIdade ? `Declaração salva (${semIdade} bovino(s) sem data de nascimento ficaram de fora).` : 'Declaração salva.');
       App.refresh();
     });
 
     desenhar();
+  },
+
+  // Mostra a distribuição completa (por faixa etária/sexo) que ficou salva numa declaração
+  // ADAPEC antiga — o card da lista só mostra o total, isso aqui é a consulta detalhada.
+  abrirDetalheAdapec(r) {
+    const ordem = ['0_2', '3_8', '9_12', '13_24', '25_36', '36_mais'];
+    const linha = (rotulo, m, f) => `
+      <div class="rec-row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span>${Utils.escapeHtml(rotulo)}</span>
+        <span>M: <b>${m ?? 0}</b> &nbsp; F: <b>${f ?? 0}</b></span>
+      </div>`;
+    const html = `
+      <div class="bar-chart">
+        ${ordem.map(k => linha(this.labelFaixaAdapec[k], r['m_' + k], r['f_' + k])).join('')}
+        <div class="rec-row" style="justify-content:space-between;padding:10px 0 0;font-weight:700">
+          <span>Total</span>
+          <span>M: ${r.total_m ?? '-'} &nbsp; F: ${r.total_f ?? '-'} &nbsp; Geral: ${r.total ?? '-'}</span>
+        </div>
+      </div>
+      ${r.ajustado_manualmente ? `<p class="hint" style="margin-top:10px;">✏️ Essa declaração teve valores ajustados manualmente antes de ser salva.</p>` : ''}
+    `;
+    UI.abrirInfo({
+      titulo: `Declaração ADAPEC — ${Utils.fmtData(r.data)}${r.fazenda ? ' · ' + r.fazenda : ''}`,
+      html
+    });
   },
 
   /* ---------- COMPRAS/VENDAS (GTA) ----------
