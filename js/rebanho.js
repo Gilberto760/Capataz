@@ -1045,7 +1045,7 @@ const Rebanho = {
       elAtual.innerHTML = `
         <div class="rec-row" style="justify-content:space-between;align-items:center;padding:8px 0;">
           <a href="${Utils.escapeHtml(campoUrl.value)}" target="_blank" rel="noopener">📄 ${Utils.escapeHtml(campoNome.value || 'arquivo anexado')}</a>
-          <button type="button" class="btn btn-ghost" id="btnRemover_${idBase}" style="padding:4px 8px;">🗑️</button>
+          <button type="button" class="btn btn-ghost" id="btnRemover_${idBase}" style="padding:4px 8px;color:var(--red-600);flex-shrink:0;">🗑️ Excluir</button>
         </div>`;
       elAtual.querySelector(`#btnRemover_${idBase}`).addEventListener('click', async () => {
         if (!Utils.confirmar('Remover o anexo?')) return;
