@@ -26,6 +26,13 @@ const App = {
     window.addEventListener('online', () => this.refresh());
     window.addEventListener('offline', () => this.refresh());
 
+    // Clicar fora de qualquer dropdown de sub-abas agrupadas (ver renderTopBar) fecha todos —
+    // um listener só, registrado uma vez; cada clique no próprio botão do dropdown já para a
+    // propagação (e.stopPropagation()), então nunca chega aqui pra fechar o que acabou de abrir.
+    document.addEventListener('click', () => {
+      document.querySelectorAll('#subtabs .subtab-group-menu').forEach(m => { m.hidden = true; });
+    });
+
     if (Api.configurado()) {
       // Manda primeiro o que ficou pendente de uma sessão anterior, e só DEPOIS busca tudo do
       // servidor — na ordem errada (os dois ao mesmo tempo), um carregarTudo() que termina antes
@@ -120,21 +127,54 @@ const App = {
     if (mod && mod.subtabs && mod.subtabs.length > 1) {
       if (!this.subAtual) this.subAtual = mod.subtabs[0].key;
       subtabsEl.style.display = 'flex';
-      // Quando as sub-abas têm "group" (ex: Cadastros), insere um rotulozinho antes do
-      // primeiro chip de cada grupo novo, só pra organizar visualmente — a navegação
-      // continua sendo pela mesma lista plana de sempre.
-      let grupoAnterior = null;
-      subtabsEl.innerHTML = mod.subtabs.map(st => {
-        const rotuloGrupo = (st.group && st.group !== grupoAnterior) ? `<span class="subtab-group-label">${st.group}</span>` : '';
-        grupoAnterior = st.group || grupoAnterior;
-        return `${rotuloGrupo}<button class="chip ${st.key === this.subAtual ? 'active' : ''}" data-sub="${st.key}">${st.label}</button>`;
+      // Sub-abas com "group" (ex: Cadastros) viram UM dropdown por grupo em vez de um chip
+      // pra cada uma — com muitas sub-abas (Fazendas, Proprietários, Fornecedores...) a barra
+      // inteira em chips não cabia na tela e ficava um scroll horizontal gigante. Sub-abas sem
+      // "group" continuam como chip avulso de sempre. A navegação em si não muda, só a apresentação.
+      const blocos = [];
+      const indicePorGrupo = {};
+      mod.subtabs.forEach((st) => {
+        if (!st.group) { blocos.push({ tipo: 'chip', item: st }); return; }
+        if (!(st.group in indicePorGrupo)) {
+          indicePorGrupo[st.group] = blocos.length;
+          blocos.push({ tipo: 'grupo', nome: st.group, itens: [] });
+        }
+        blocos[indicePorGrupo[st.group]].itens.push(st);
+      });
+      subtabsEl.innerHTML = blocos.map((b) => {
+        if (b.tipo === 'chip') {
+          return `<button class="chip ${b.item.key === this.subAtual ? 'active' : ''}" data-sub="${b.item.key}">${b.item.label}</button>`;
+        }
+        const ativo = b.itens.find(it => it.key === this.subAtual);
+        return `<div class="subtab-group-drop" data-grupo="${Utils.escapeHtml(b.nome)}">
+          <button type="button" class="chip subtab-group-btn ${ativo ? 'active' : ''}" data-toggle-grupo="${Utils.escapeHtml(b.nome)}">
+            ${Utils.escapeHtml(b.nome)}${ativo ? ': ' + Utils.escapeHtml(ativo.label) : ''} ▾
+          </button>
+          <div class="subtab-group-menu" hidden>
+            ${b.itens.map(it => `<button type="button" class="subtab-group-item ${it.key === this.subAtual ? 'active' : ''}" data-sub="${it.key}">${Utils.escapeHtml(it.label)}</button>`).join('')}
+          </div>
+        </div>`;
       }).join('');
-      subtabsEl.querySelectorAll('.chip').forEach(c => {
-        c.addEventListener('click', () => {
-          this.subAtual = c.dataset.sub;
-          location.hash = this.secaoAtual + '/' + this.subAtual;
-          this.renderTopBar();
-          this.renderConteudo();
+
+      const irPraSub = (key) => {
+        this.subAtual = key;
+        location.hash = this.secaoAtual + '/' + this.subAtual;
+        this.renderTopBar();
+        this.renderConteudo();
+      };
+      subtabsEl.querySelectorAll('.chip[data-sub]').forEach(c => {
+        c.addEventListener('click', () => irPraSub(c.dataset.sub));
+      });
+      subtabsEl.querySelectorAll('.subtab-group-item').forEach(c => {
+        c.addEventListener('click', () => irPraSub(c.dataset.sub));
+      });
+      subtabsEl.querySelectorAll('[data-toggle-grupo]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const menu = btn.nextElementSibling;
+          const jaAberto = !menu.hidden;
+          subtabsEl.querySelectorAll('.subtab-group-menu').forEach(m => { m.hidden = true; });
+          menu.hidden = jaAberto;
         });
       });
     } else {

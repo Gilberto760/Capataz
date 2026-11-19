@@ -65,14 +65,36 @@ body {
   border-bottom:1px solid var(--border);
   flex-shrink:0;
 }
-.subtab-group-label {
-  font-size:11px;
-  text-transform:uppercase;
-  letter-spacing:.04em;
-  color: var(--text-muted);
-  margin-left:6px;
+.subtab-group-drop { position:relative; }
+.subtab-group-btn { display:flex; align-items:center; gap:4px; }
+.subtab-group-menu {
+  position:absolute;
+  top:calc(100% + 4px);
+  left:0;
+  z-index:20;
+  background:var(--card-bg);
+  border:1px solid var(--border);
+  border-radius:10px;
+  box-shadow:0 4px 14px rgba(0,0,0,0.12);
+  padding:6px;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  min-width:180px;
 }
-.subtab-group-label:first-child { margin-left:0; }
+.subtab-group-item {
+  border:none;
+  background:none;
+  text-align:left;
+  padding:8px 10px;
+  border-radius:8px;
+  font-size:13px;
+  color: var(--text-muted);
+  cursor:pointer;
+  white-space:nowrap;
+}
+.subtab-group-item:active { background: var(--bg); }
+.subtab-group-item.active { background: var(--green-700); color:#fff; }
 
 /* ---------- Conteúdo ---------- */
 #content {
