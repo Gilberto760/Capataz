@@ -984,6 +984,7 @@ const Rebanho = {
           </tbody>
           <tfoot>
             <tr style="font-weight:700;"><td>Total</td><td id="totalAjusteM">-</td><td id="totalAjusteF">-</td></tr>
+            <tr style="font-weight:700;"><td>Total geral</td><td colspan="2" id="totalAjusteGeral">-</td></tr>
           </tfoot>
         </table>`;
       const box = UI.abrirInfo({
@@ -997,6 +998,7 @@ const Rebanho = {
         box.querySelectorAll('[data-ajuste-f]').forEach(i => { totalF += Number(i.value) || 0; });
         box.querySelector('#totalAjusteM').textContent = totalM;
         box.querySelector('#totalAjusteF').textContent = totalF;
+        box.querySelector('#totalAjusteGeral').textContent = totalM + totalF;
       };
       box.querySelectorAll('.input-ajuste-adapec').forEach(i => i.addEventListener('input', atualizarTotais));
       atualizarTotais();
