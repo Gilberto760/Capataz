@@ -47,7 +47,11 @@ const Mapa = {
       </div>
       <div id="mapaPropriedade" class="mapa-propriedade"></div>
       <p class="hint">Use o ícone de polígono no canto do mapa pra desenhar um novo pasto, os ícones de editar/excluir pra ajustar os já desenhados, ou importe um arquivo pronto do Google Earth.</p>
-      <h3 class="section-title">Pastos / talhões desta fazenda</h3>
+      <div class="toolbar" style="margin-top:14px;">
+        <h3 class="section-title" style="margin:0;">Pastos / talhões desta fazenda</h3>
+        <button type="button" class="btn btn-ghost" id="btnNovaPastaMapa">📁 Nova pasta</button>
+      </div>
+      <p class="hint">Organize os pastos em pastas/subpastas pra separar projetos (ex: "Projeto Rotação 2026" &gt; "Piquetes Norte").</p>
       <div id="listaPastos"></div>
     `;
 
@@ -62,6 +66,94 @@ const Mapa = {
     this._iniciarMapa(container, fazenda);
     this._renderListaPastos(container, fazenda);
     this._ligarImportacaoKml(container, fazenda);
+    container.querySelector('#btnNovaPastaMapa').addEventListener('click', () => this._abrirFormPasta(fazenda, null));
+  },
+
+  _pastasDaFazenda(fazenda) {
+    return Api.list('pastas_mapa').filter(p => p.fazenda === fazenda.nome);
+  },
+
+  /* Lista de pastas em ordem de árvore (pai antes dos filhos), com "nivel" pra indentar em selects */
+  _arvorePastasOrdenada(fazenda) {
+    const pastas = this._pastasDaFazenda(fazenda).sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+    const porPai = {};
+    pastas.forEach(p => {
+      const chave = p.pasta_pai || '_raiz';
+      (porPai[chave] = porPai[chave] || []).push(p);
+    });
+    const resultado = [];
+    const percorrer = (paiId, nivel) => {
+      (porPai[paiId || '_raiz'] || []).forEach(p => {
+        resultado.push({ pasta: p, nivel });
+        percorrer(p.id, nivel + 1);
+      });
+    };
+    percorrer(null, 0);
+    return resultado;
+  },
+
+  _opcoesPastaSelect(fazenda, excluirIds) {
+    const excluir = excluirIds ? (Array.isArray(excluirIds) ? excluirIds : [excluirIds]) : [];
+    return this._arvorePastasOrdenada(fazenda)
+      .filter(({ pasta }) => !excluir.includes(pasta.id))
+      .map(({ pasta, nivel }) => ({ value: pasta.id, label: '—'.repeat(nivel) + ' ' + pasta.nome }));
+  },
+
+  /* ids da própria pasta + todas as subpastas dela, pra nunca deixar o usuário escolher
+     um desses como "pasta_pai" (criaria um ciclo na árvore). */
+  _idsComDescendentes(fazenda, pastaId) {
+    const todas = this._pastasDaFazenda(fazenda);
+    const ids = [pastaId];
+    const coletar = (id) => {
+      todas.filter(p => p.pasta_pai === id).forEach(filha => { ids.push(filha.id); coletar(filha.id); });
+    };
+    coletar(pastaId);
+    return ids;
+  },
+
+  _abrirFormPasta(fazenda, pastaPai, pastaExistente) {
+    UI.abrirFormulario({
+      titulo: pastaExistente ? 'Renomear pasta' : (pastaPai ? `Nova subpasta em "${pastaPai.nome}"` : 'Nova pasta'),
+      schema: [
+        { key: 'nome', label: 'Nome da pasta', type: 'text', required: true },
+        { key: 'pasta_pai', label: 'Dentro da pasta', type: 'select', options: this._opcoesPastaSelect(fazenda, pastaExistente ? this._idsComDescendentes(fazenda, pastaExistente.id) : null) }
+      ],
+      dados: pastaExistente || { pasta_pai: pastaPai ? pastaPai.id : '' },
+      onSalvar: async (dados) => {
+        if (pastaExistente) {
+          await Api.atualizar('pastas_mapa', pastaExistente.id, { nome: dados.nome, pasta_pai: dados.pasta_pai || null });
+          Utils.toast('Pasta atualizada.');
+        } else {
+          await Api.criar('pastas_mapa', { fazenda: fazenda.nome, nome: dados.nome, pasta_pai: dados.pasta_pai || null });
+          Utils.toast('Pasta criada.');
+        }
+        App.refresh();
+      },
+      onExcluir: pastaExistente ? async () => {
+        if (!Utils.confirmar(`Excluir a pasta "${pastaExistente.nome}" e todas as suas subpastas? Os pastos dentro dela não são excluídos, só ficam sem pasta.`)) return;
+        await this._excluirPastaEDescendentes(fazenda, pastaExistente.id);
+        Utils.toast('Pasta excluída.');
+        App.refresh();
+      } : undefined
+    });
+  },
+
+  async _excluirPastaEDescendentes(fazenda, pastaId) {
+    const todas = this._pastasDaFazenda(fazenda);
+    const descendentes = [];
+    const coletar = (id) => {
+      todas.filter(p => p.pasta_pai === id).forEach(filha => { coletar(filha.id); descendentes.push(filha.id); });
+    };
+    coletar(pastaId);
+    const idsParaExcluir = [...descendentes, pastaId];
+    const pastosAfetados = Api.list('talhoes').filter(t => idsParaExcluir.includes(t.pasta));
+    for (const pasto of pastosAfetados) {
+      await Api.atualizar('talhoes', pasto.id, { pasta: null });
+    }
+    // Exclui da ponta pra raiz (filhas antes das mães) pra nunca deixar uma pasta_pai orfã no meio do caminho.
+    for (const id of idsParaExcluir) {
+      await Api.excluir('pastas_mapa', id);
+    }
   },
 
   _ligarImportacaoKml(container, fazenda) {
@@ -173,10 +265,12 @@ const Mapa = {
       titulo: `Novo pasto/talhão — ${Utils.fmtNum(hectares, 2)} ha`,
       schema: [
         { key: 'nome', label: 'Nome do pasto', type: 'text', required: true },
-        { key: 'tipo_uso', label: 'Tipo de uso', type: 'text', suggestions: this.tiposUsoPasto }
+        { key: 'tipo_uso', label: 'Tipo de uso', type: 'text', suggestions: this.tiposUsoPasto },
+        { key: 'pasta', label: 'Pasta (projeto)', type: 'select', options: this._opcoesPastaSelect(fazenda) }
       ],
       dados: { tipo_uso: 'Pastagem' },
       onSalvar: async (dados) => {
+        dados.pasta = dados.pasta || null;
         const novo = await Api.criar('talhoes', Object.assign({
           fazenda: fazenda.nome,
           poligono: pontos.map(p => p.join(',')).join(' '),
@@ -253,33 +347,82 @@ const Mapa = {
   },
 
   _renderListaPastos(container, fazenda) {
+    const elLista = container.querySelector('#listaPastos');
     const pastos = this._pastosDaFazenda(fazenda).sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
-    UI.renderList(container.querySelector('#listaPastos'), {
-      data: pastos,
-      emptyText: 'Nenhum pasto/talhão desenhado ainda.',
-      onCardClick: (r) => this._focarPasto(r),
-      renderCard: (r) => `
+    const pastas = this._pastasDaFazenda(fazenda);
+    if (!pastos.length && !pastas.length) {
+      elLista.innerHTML = `<div class="empty-state">Nenhum pasto/talhão desenhado ainda.</div>`;
+      return;
+    }
+
+    const cardPasto = (r) => `
+      <div class="rec-card" data-pasto="${r.id}">
         <div class="rec-title">${Utils.escapeHtml(r.nome)} ${r._pendente ? UI.badge('Pendente', 'orange') : ''}</div>
         <div class="rec-row">
           <span>${r.hectares ? Utils.fmtNum(r.hectares, 2) + ' ha' : '-'}</span>
           <span>${Utils.escapeHtml(r.tipo_uso || '-')}</span>
           <button type="button" class="btn btn-ghost" data-stop data-editar-pasto="${r.id}" style="padding:4px 8px;margin-left:auto;">✏️ Renomear</button>
-        </div>`
+        </div>
+      </div>`;
+
+    const pastosDaPasta = (pastaId) => pastos.filter(p => (p.pasta || null) === pastaId);
+
+    const renderPasta = (pasta) => {
+      const filhas = pastas.filter(p => p.pasta_pai === pasta.id).sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+      const pastosAqui = pastosDaPasta(pasta.id);
+      return `
+        <details class="pasta-mapa" open>
+          <summary>
+            <span class="pasta-mapa-nome">📁 ${Utils.escapeHtml(pasta.nome)}</span>
+            <span class="pasta-mapa-acoes">
+              <button type="button" class="btn btn-ghost" data-stop data-subpasta="${pasta.id}" style="padding:4px 8px;">+ Subpasta</button>
+              <button type="button" class="btn btn-ghost" data-stop data-editar-pasta="${pasta.id}" style="padding:4px 8px;">✏️ Editar</button>
+            </span>
+          </summary>
+          <div class="pasta-mapa-conteudo">
+            ${filhas.map(renderPasta).join('')}
+            ${pastosAqui.length ? pastosAqui.map(cardPasto).join('') : (filhas.length ? '' : '<div class="empty-state">Nenhum pasto nesta pasta ainda.</div>')}
+          </div>
+        </details>`;
+    };
+
+    const pastasRaiz = pastas.filter(p => !p.pasta_pai).sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+    const pastosSemPasta = pastosDaPasta(null);
+
+    elLista.classList.add('rec-list');
+    elLista.innerHTML = `
+      ${pastasRaiz.map(renderPasta).join('')}
+      ${pastosSemPasta.map(cardPasto).join('')}
+    `;
+
+    elLista.querySelectorAll('[data-pasto]').forEach(card => {
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('[data-stop]')) return;
+        this._focarPasto(Api.get('talhoes', card.dataset.pasto));
+      });
     });
-    container.querySelectorAll('[data-editar-pasto]').forEach(btn => {
-      btn.addEventListener('click', () => this._editarPasto(Api.get('talhoes', btn.dataset.editarPasto)));
+    elLista.querySelectorAll('[data-editar-pasto]').forEach(btn => {
+      btn.addEventListener('click', () => this._editarPasto(Api.get('talhoes', btn.dataset.editarPasto), fazenda));
+    });
+    elLista.querySelectorAll('[data-editar-pasta]').forEach(btn => {
+      btn.addEventListener('click', () => this._abrirFormPasta(fazenda, null, Api.get('pastas_mapa', btn.dataset.editarPasta)));
+    });
+    elLista.querySelectorAll('[data-subpasta]').forEach(btn => {
+      btn.addEventListener('click', () => this._abrirFormPasta(fazenda, Api.get('pastas_mapa', btn.dataset.subpasta)));
     });
   },
 
-  _editarPasto(pasto) {
+  _editarPasto(pasto, fazenda) {
     UI.abrirFormulario({
       titulo: 'Editar pasto/talhão',
       schema: [
         { key: 'nome', label: 'Nome do pasto', type: 'text', required: true },
-        { key: 'tipo_uso', label: 'Tipo de uso', type: 'text', suggestions: this.tiposUsoPasto }
+        { key: 'tipo_uso', label: 'Tipo de uso', type: 'text', suggestions: this.tiposUsoPasto },
+        { key: 'pasta', label: 'Pasta (projeto)', type: 'select', options: this._opcoesPastaSelect(fazenda) }
       ],
       dados: pasto,
       onSalvar: async (dados) => {
+        dados.pasta = dados.pasta || null;
         await Api.atualizar('talhoes', pasto.id, dados);
         Utils.toast('Pasto atualizado.');
         App.refresh();

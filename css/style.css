@@ -196,6 +196,14 @@ body {
 
 .cards-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-bottom:16px; }
 .rec-list { display:grid; grid-template-columns: 1fr; gap:10px; }
+
+.pasta-mapa { border:1px solid var(--border); border-radius: var(--radius); background:#fff; margin-bottom:10px; overflow:hidden; }
+.pasta-mapa > summary { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:12px 14px; cursor:pointer; list-style:none; font-weight:700; color: var(--green-900); }
+.pasta-mapa > summary::-webkit-details-marker { display:none; }
+.pasta-mapa-acoes { display:flex; gap:6px; flex-shrink:0; }
+.pasta-mapa-conteudo { padding:0 12px 12px; border-top:1px solid var(--border); }
+.pasta-mapa-conteudo .pasta-mapa { margin:10px 0 0; }
+.pasta-mapa-conteudo .rec-card { margin:10px 0 0; }
 .stat-card { background:#fff; border:1px solid var(--border); border-radius: var(--radius); padding:14px; }
 .stat-label { font-size:12px; color: var(--text-muted); margin-bottom:4px; }
 .stat-value { font-size:20px; font-weight:800; color: var(--text); }
