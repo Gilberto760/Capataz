@@ -12,6 +12,7 @@ const Mapa = {
   _fazendaAtual: null,
   _pastoLayers: {},     // talhaoId -> layer do Leaflet (mesmo quando oculto, pra focar/recalcular bounds)
   _pastosOcultos: new Set(), // talhaoId dos pastos escondidos do mapa (só visualização, não persiste no banco)
+  _pastasAbertas: new Set(), // pastaId das pastas que o usuário abriu (começam todas recolhidas)
 
   tiposUsoPasto: ['Pastagem', 'Lavoura', 'Reserva/APP', 'Benfeitoria', 'Outro'],
 
@@ -397,7 +398,7 @@ const Mapa = {
       const todosDaPasta = this._pastosSobPasta(fazenda, pasta.id);
       const todosOcultos = todosDaPasta.length > 0 && todosDaPasta.every(t => this._pastosOcultos.has(t.id));
       return `
-        <details class="pasta-mapa" open>
+        <details class="pasta-mapa" data-pasta-id="${pasta.id}" ${this._pastasAbertas.has(pasta.id) ? 'open' : ''}>
           <summary>
             <span class="pasta-mapa-nome">📁 ${Utils.escapeHtml(pasta.nome)}</span>
             <span class="pasta-mapa-acoes">
@@ -449,6 +450,14 @@ const Mapa = {
         this._alternarVisibilidadePasta(fazenda, btn.dataset.togglePastaVis);
         this._atualizarBotaoAlternarTodos(container, fazenda);
         this._renderListaPastos(container, fazenda);
+      });
+    });
+    // Lembra quais pastas o usuário abriu, pra não recolher tudo de novo a cada re-render
+    // (ex: depois de ocultar um pasto que está dentro de uma pasta aberta).
+    elLista.querySelectorAll('details.pasta-mapa').forEach(det => {
+      det.addEventListener('toggle', () => {
+        if (det.open) this._pastasAbertas.add(det.dataset.pastaId);
+        else this._pastasAbertas.delete(det.dataset.pastaId);
       });
     });
   },
