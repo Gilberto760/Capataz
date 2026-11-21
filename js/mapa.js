@@ -10,6 +10,8 @@ const Mapa = {
   _medirArea: null,
   _modoDesenho: 'pasto', // 'pasto' | 'distancia' | 'area' — decide o que fazer no próximo draw:created
   _fazendaAtual: null,
+  _pastoLayers: {},     // talhaoId -> layer do Leaflet (mesmo quando oculto, pra focar/recalcular bounds)
+  _pastosOcultos: new Set(), // talhaoId dos pastos escondidos do mapa (só visualização, não persiste no banco)
 
   tiposUsoPasto: ['Pastagem', 'Lavoura', 'Reserva/APP', 'Benfeitoria', 'Outro'],
 
@@ -49,9 +51,10 @@ const Mapa = {
       <p class="hint">Use o ícone de polígono no canto do mapa pra desenhar um novo pasto, os ícones de editar/excluir pra ajustar os já desenhados, ou importe um arquivo pronto do Google Earth.</p>
       <div class="toolbar" style="margin-top:14px;">
         <h3 class="section-title" style="margin:0;">Pastos / talhões desta fazenda</h3>
+        <button type="button" class="btn btn-ghost" id="btnAlternarTodosPastos"></button>
         <button type="button" class="btn btn-ghost" id="btnNovaPastaMapa">📁 Nova pasta</button>
       </div>
-      <p class="hint">Organize os pastos em pastas/subpastas pra separar projetos (ex: "Projeto Rotação 2026" &gt; "Piquetes Norte").</p>
+      <p class="hint">Organize os pastos em pastas/subpastas pra separar projetos (ex: "Projeto Rotação 2026" &gt; "Piquetes Norte"). Use o olho 👁️ em cada pasto (ou em cada pasta) pra ocultar/mostrar no mapa, sem precisar excluir.</p>
       <div id="listaPastos"></div>
     `;
 
@@ -67,6 +70,18 @@ const Mapa = {
     this._renderListaPastos(container, fazenda);
     this._ligarImportacaoKml(container, fazenda);
     container.querySelector('#btnNovaPastaMapa').addEventListener('click', () => this._abrirFormPasta(fazenda, null));
+    this._atualizarBotaoAlternarTodos(container, fazenda);
+    container.querySelector('#btnAlternarTodosPastos').addEventListener('click', () => {
+      this._alternarVisibilidadeTodos(fazenda);
+      this._atualizarBotaoAlternarTodos(container, fazenda);
+      this._renderListaPastos(container, fazenda);
+    });
+  },
+
+  _atualizarBotaoAlternarTodos(container, fazenda) {
+    const pastos = this._pastosDaFazenda(fazenda);
+    const todasOcultas = pastos.length > 0 && pastos.every(t => this._pastosOcultos.has(t.id));
+    container.querySelector('#btnAlternarTodosPastos').textContent = todasOcultas ? '👁️ Mostrar todos' : '🚫 Ocultar todos';
   },
 
   _pastasDaFazenda(fazenda) {
@@ -213,15 +228,19 @@ const Mapa = {
       L.polygon(pontosFazenda, { color: '#fff', weight: 2, dashArray: '6 6', fillOpacity: 0, interactive: false }).addTo(this._grupoFazenda);
     }
 
-    // Pastos/talhões: cada um é um polígono editável dentro do grupo controlado pelo Leaflet.draw
+    // Pastos/talhões: cada um é um polígono editável dentro do grupo controlado pelo Leaflet.draw.
+    // Os ocultos (toggle de visualização) ganham o layer mas não entram no grupo — assim não aparecem
+    // no mapa nem contam pros bounds/zoom automático, mas continuam na lista pra serem reativados.
     this._grupoPastos = L.featureGroup().addTo(mapa);
+    this._pastoLayers = {};
     this._pastosDaFazenda(fazenda).forEach(pasto => {
       const pontos = Cadastros.parseCoordenadasPoligono(pasto.poligono);
       if (!pontos) return;
       const layer = L.polygon(pontos, { color: '#4caf50', weight: 3, fillOpacity: 0.2 });
       layer.talhaoId = pasto.id;
       layer.bindTooltip(pasto.nome);
-      this._grupoPastos.addLayer(layer);
+      this._pastoLayers[pasto.id] = layer;
+      if (!this._pastosOcultos.has(pasto.id)) this._grupoPastos.addLayer(layer);
     });
 
     const bounds = this._grupoFazenda.getBounds().isValid() ? this._grupoFazenda.getBounds()
@@ -278,6 +297,7 @@ const Mapa = {
         }, dados));
         layer.talhaoId = novo.id;
         layer.bindTooltip(novo.nome);
+        this._pastoLayers[novo.id] = layer;
         Utils.toast(`Pasto salvo (${Utils.fmtNum(hectares, 2)} ha).`);
         App.refresh();
       },
@@ -355,26 +375,33 @@ const Mapa = {
       return;
     }
 
-    const cardPasto = (r) => `
-      <div class="rec-card" data-pasto="${r.id}">
+    const cardPasto = (r) => {
+      const oculto = this._pastosOcultos.has(r.id);
+      return `
+      <div class="rec-card ${oculto ? 'pasto-oculto' : ''}" data-pasto="${r.id}">
         <div class="rec-title">${Utils.escapeHtml(r.nome)} ${r._pendente ? UI.badge('Pendente', 'orange') : ''}</div>
         <div class="rec-row">
           <span>${r.hectares ? Utils.fmtNum(r.hectares, 2) + ' ha' : '-'}</span>
           <span>${Utils.escapeHtml(r.tipo_uso || '-')}</span>
-          <button type="button" class="btn btn-ghost" data-stop data-editar-pasto="${r.id}" style="padding:4px 8px;margin-left:auto;">✏️ Renomear</button>
+          <button type="button" class="btn btn-ghost" data-stop data-toggle-visivel="${r.id}" title="${oculto ? 'Mostrar no mapa' : 'Ocultar do mapa'}" style="padding:4px 8px;margin-left:auto;">${oculto ? '🚫' : '👁️'}</button>
+          <button type="button" class="btn btn-ghost" data-stop data-editar-pasto="${r.id}" style="padding:4px 8px;">✏️ Renomear</button>
         </div>
       </div>`;
+    };
 
     const pastosDaPasta = (pastaId) => pastos.filter(p => (p.pasta || null) === pastaId);
 
     const renderPasta = (pasta) => {
       const filhas = pastas.filter(p => p.pasta_pai === pasta.id).sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
       const pastosAqui = pastosDaPasta(pasta.id);
+      const todosDaPasta = this._pastosSobPasta(fazenda, pasta.id);
+      const todosOcultos = todosDaPasta.length > 0 && todosDaPasta.every(t => this._pastosOcultos.has(t.id));
       return `
         <details class="pasta-mapa" open>
           <summary>
             <span class="pasta-mapa-nome">📁 ${Utils.escapeHtml(pasta.nome)}</span>
             <span class="pasta-mapa-acoes">
+              ${todosDaPasta.length ? `<button type="button" class="btn btn-ghost" data-stop data-toggle-pasta-vis="${pasta.id}" style="padding:4px 8px;">${todosOcultos ? '👁️ Mostrar todos' : '🚫 Ocultar todos'}</button>` : ''}
               <button type="button" class="btn btn-ghost" data-stop data-subpasta="${pasta.id}" style="padding:4px 8px;">+ Subpasta</button>
               <button type="button" class="btn btn-ghost" data-stop data-editar-pasta="${pasta.id}" style="padding:4px 8px;">✏️ Editar</button>
             </span>
@@ -410,6 +437,20 @@ const Mapa = {
     elLista.querySelectorAll('[data-subpasta]').forEach(btn => {
       btn.addEventListener('click', () => this._abrirFormPasta(fazenda, Api.get('pastas_mapa', btn.dataset.subpasta)));
     });
+    elLista.querySelectorAll('[data-toggle-visivel]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this._alternarVisibilidadePasto(btn.dataset.toggleVisivel);
+        this._atualizarBotaoAlternarTodos(container, fazenda);
+        this._renderListaPastos(container, fazenda);
+      });
+    });
+    elLista.querySelectorAll('[data-toggle-pasta-vis]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this._alternarVisibilidadePasta(fazenda, btn.dataset.togglePastaVis);
+        this._atualizarBotaoAlternarTodos(container, fazenda);
+        this._renderListaPastos(container, fazenda);
+      });
+    });
   },
 
   _editarPasto(pasto, fazenda) {
@@ -436,9 +477,45 @@ const Mapa = {
   },
 
   _focarPasto(pasto) {
-    if (!this._mapa || !this._grupoPastos) return;
-    let layerAlvo = null;
-    this._grupoPastos.eachLayer(l => { if (l.talhaoId === pasto.id) layerAlvo = l; });
-    if (layerAlvo) this._mapa.fitBounds(layerAlvo.getBounds(), { padding: [30, 30] });
+    if (!this._mapa) return;
+    const layer = this._pastoLayers[pasto.id];
+    if (layer) this._mapa.fitBounds(layer.getBounds(), { padding: [30, 30] });
+  },
+
+  /* Oculta/mostra um pasto no mapa (não exclui nada, só tira/coloca o polígono do grupo visível). */
+  _alternarVisibilidadePasto(id) {
+    const layer = this._pastoLayers[id];
+    if (this._pastosOcultos.has(id)) {
+      this._pastosOcultos.delete(id);
+      if (layer) this._grupoPastos.addLayer(layer);
+    } else {
+      this._pastosOcultos.add(id);
+      if (layer) this._grupoPastos.removeLayer(layer);
+    }
+  },
+
+  /* ids dos pastos dentro de uma pasta, incluindo os das subpastas dela. */
+  _pastosSobPasta(fazenda, pastaId) {
+    const idsPastas = this._idsComDescendentes(fazenda, pastaId);
+    return this._pastosDaFazenda(fazenda).filter(t => idsPastas.includes(t.pasta));
+  },
+
+  /* Oculta todos de uma vez se algum estiver visível; mostra todos se já estiverem todos ocultos. */
+  _alternarVisibilidadeConjunto(pastos) {
+    const todasOcultas = pastos.length > 0 && pastos.every(t => this._pastosOcultos.has(t.id));
+    pastos.forEach(t => {
+      if (todasOcultas) this._pastosOcultos.delete(t.id); else this._pastosOcultos.add(t.id);
+      const layer = this._pastoLayers[t.id];
+      if (!layer) return;
+      if (todasOcultas) this._grupoPastos.addLayer(layer); else this._grupoPastos.removeLayer(layer);
+    });
+  },
+
+  _alternarVisibilidadePasta(fazenda, pastaId) {
+    this._alternarVisibilidadeConjunto(this._pastosSobPasta(fazenda, pastaId));
+  },
+
+  _alternarVisibilidadeTodos(fazenda) {
+    this._alternarVisibilidadeConjunto(this._pastosDaFazenda(fazenda));
   }
 };
