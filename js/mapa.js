@@ -6,6 +6,7 @@ const Mapa = {
   _grupoPastos: null,   // L.FeatureGroup com os polígonos editáveis (1 por talhão)
   _grupoOcupacao: null, // L.FeatureGroup com o ícone 🐄 dos pastos com lote ativo (não editável)
   _marcadoresOcupacao: {}, // talhaoId -> marker do ícone de ocupação (só existe pra quem tem lote ativo)
+  _marcadoresDescanso: {}, // talhaoId -> marker do ícone de descanso (só existe pra quem já teve lote e está vazio agora)
   _grupoFazenda: null,  // contorno da fazenda (referência, não editável)
   _grupoMedida: null,   // desenho temporário de medição (não salva)
   _medirDistancia: null,
@@ -238,6 +239,7 @@ const Mapa = {
     this._grupoOcupacao = L.featureGroup().addTo(mapa);
     this._pastoLayers = {};
     this._marcadoresOcupacao = {};
+    this._marcadoresDescanso = {};
     this._pastosDaFazenda(fazenda).forEach(pasto => {
       const pontos = Cadastros.parseCoordenadasPoligono(pasto.poligono);
       if (!pontos) return;
@@ -263,6 +265,23 @@ const Mapa = {
         marcador.on('click', () => this._gerenciarOcupacao(container, fazenda, pasto));
         this._marcadoresOcupacao[pasto.id] = marcador;
         if (!this._pastosOcultos.has(pasto.id)) this._grupoOcupacao.addLayer(marcador);
+      } else {
+        const diasDescanso = this._diasDescanso(pasto.id);
+        if (diasDescanso != null) {
+          const marcador = L.marker(layer.getBounds().getCenter(), {
+            icon: L.divIcon({
+              className: 'icone-descanso-mapa',
+              html: `🌱 ${diasDescanso}d`,
+              iconSize: [42, 22],
+              iconAnchor: [21, 11]
+            }),
+            interactive: true
+          });
+          marcador.bindTooltip(`Em descanso há ${diasDescanso} dia(s)`);
+          marcador.on('click', () => this._gerenciarOcupacao(container, fazenda, pasto));
+          this._marcadoresDescanso[pasto.id] = marcador;
+          if (!this._pastosOcultos.has(pasto.id)) this._grupoOcupacao.addLayer(marcador);
+        }
       }
     });
 
@@ -413,6 +432,14 @@ const Mapa = {
           <div class="rec-row ocupacao-pasto ${atrasado ? 'atrasado' : ''}">
             <span>🐄 ${Utils.escapeHtml(ocupacao.nome_lote)}${ocupacao.quantidade_animais ? ' (' + ocupacao.quantidade_animais + ' animais)' : ''} — ${dias} dia(s)${ocupacao.dias_previstos != null ? ' / previsto ' + ocupacao.dias_previstos : ''}${ocupacao.data_saida_prevista ? (saidaPassou ? ' / deveria ter saído em ' : ' / sai em ') + Utils.fmtData(ocupacao.data_saida_prevista) : ''}</span>
           </div>`;
+      } else {
+        const diasDescanso = this._diasDescanso(r.id);
+        if (diasDescanso != null) {
+          linhaOcupacao = `
+            <div class="rec-row ocupacao-pasto descanso">
+              <span>🌱 Em descanso há ${diasDescanso} dia(s)</span>
+            </div>`;
+        }
       }
       return `
       <div class="rec-card ${oculto ? 'pasto-oculto' : ''}" data-pasto="${r.id}">
@@ -541,7 +568,7 @@ const Mapa = {
   /* Oculta/mostra um pasto no mapa (não exclui nada, só tira/coloca o polígono do grupo visível). */
   _alternarVisibilidadePasto(id) {
     const layer = this._pastoLayers[id];
-    const marcador = this._marcadoresOcupacao[id];
+    const marcador = this._marcadoresOcupacao[id] || this._marcadoresDescanso[id];
     if (this._pastosOcultos.has(id)) {
       this._pastosOcultos.delete(id);
       if (layer) this._grupoPastos.addLayer(layer);
@@ -566,7 +593,7 @@ const Mapa = {
       if (todasOcultas) this._pastosOcultos.delete(t.id); else this._pastosOcultos.add(t.id);
       const layer = this._pastoLayers[t.id];
       if (layer) { if (todasOcultas) this._grupoPastos.addLayer(layer); else this._grupoPastos.removeLayer(layer); }
-      const marcador = this._marcadoresOcupacao[t.id];
+      const marcador = this._marcadoresOcupacao[t.id] || this._marcadoresDescanso[t.id];
       if (marcador) { if (todasOcultas) this._grupoOcupacao.addLayer(marcador); else this._grupoOcupacao.removeLayer(marcador); }
     });
   },
@@ -585,6 +612,16 @@ const Mapa = {
      (quem cria uma nova entrada sempre encerra a anterior antes, ver _gerenciarOcupacao). */
   _ocupacaoAberta(talhaoId) {
     return Api.list('talhao_ocupacoes').find(o => o.talhao_id === talhaoId && !o.data_saida) || null;
+  },
+
+  /* Dias que o piquete está vazio (sem lote), contados a partir da saída mais recente registrada
+     nele. null quando o piquete nunca teve nenhum lote (não há descanso a contar). Só faz sentido
+     chamar pra um piquete que no momento NÃO tem ocupação aberta. */
+  _diasDescanso(talhaoId) {
+    const encerradas = Api.list('talhao_ocupacoes').filter(o => o.talhao_id === talhaoId && o.data_saida);
+    if (!encerradas.length) return null;
+    const ultimaSaida = encerradas.reduce((max, o) => o.data_saida > max ? o.data_saida : max, encerradas[0].data_saida);
+    return Utils.diasEntre(ultimaSaida);
   },
 
   /* Passou do previsto tanto por quantidade de dias quanto por já ter ultrapassado a data de
