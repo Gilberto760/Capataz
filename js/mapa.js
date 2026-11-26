@@ -623,17 +623,20 @@ const Mapa = {
       .sort((a, b) => (b.data_entrada || '').localeCompare(a.data_entrada || ''));
 
     const render = () => {
-      const linhas = ocupacoes.length ? ocupacoes.map(o => `
+      const linhas = ocupacoes.length ? ocupacoes.map(o => {
+        const dias = Utils.diasEntre(o.data_entrada, o.data_saida);
+        return `
         <div class="rec-row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
           <span>
             <b>${Utils.escapeHtml(o.nome_lote)}</b>${o.quantidade_animais ? ' (' + o.quantidade_animais + ' animais)' : ''}<br/>
-            <span class="hint">${Utils.fmtData(o.data_entrada)} → ${o.data_saida ? Utils.fmtData(o.data_saida) : 'ainda neste piquete'}</span>
+            <span class="hint">${Utils.fmtData(o.data_entrada)} → ${o.data_saida ? Utils.fmtData(o.data_saida) : 'ainda neste piquete'} — ${dias} dia(s)</span>
           </span>
           <span style="display:flex;gap:6px;flex-shrink:0;">
             ${o.data_saida ? `<button type="button" class="btn btn-ghost" data-reabrir="${o.id}" style="padding:4px 8px;">↩️ Reabrir</button>` : ''}
             <button type="button" class="btn btn-ghost" data-excluir-ocupacao="${o.id}" style="padding:4px 8px;color:var(--red-600);">🗑️ Excluir</button>
           </span>
-        </div>`).join('') : '<div class="empty-state">Nenhuma movimentação registrada neste piquete.</div>';
+        </div>`;
+      }).join('') : '<div class="empty-state">Nenhuma movimentação registrada neste piquete.</div>';
 
       const box = UI.abrirInfo({ titulo: `Histórico — ${pasto.nome}`, html: linhas });
 
@@ -667,6 +670,31 @@ const Mapa = {
     render();
   },
 
+  /* A data de saída prevista é calculada (data de entrada + dias previstos), mas continua sendo
+     um campo de data normal que o usuário pode sobrescrever à mão — uma vez que ele mexe nela
+     diretamente, os campos de entrada/dias previstos param de recalculá-la por cima.
+     `calcularAoAbrir`: true recalcula assim que o form abre (útil quando dias_previstos já vem
+     preenchido, ex: no "mover"); false preserva o valor que já estava salvo (ex: ao editar). */
+  _ligarCalculoSaidaPrevista(box, { entradaFixa, calcularAoAbrir } = {}) {
+    const form = box.querySelector('#dynForm');
+    const campoEntrada = form.querySelector('[name="data_entrada"]');
+    const campoDias = form.querySelector('[name="dias_previstos"]');
+    const campoSaida = form.querySelector('[name="data_saida_prevista"]');
+    if (!campoDias || !campoSaida) return;
+    let editadaManualmente = false;
+    const calcular = () => {
+      const entrada = entradaFixa || (campoEntrada && campoEntrada.value);
+      if (!entrada || !campoDias.value) return;
+      const d = new Date(entrada + 'T00:00:00');
+      d.setDate(d.getDate() + Number(campoDias.value));
+      campoSaida.value = d.toISOString().slice(0, 10);
+    };
+    campoDias.addEventListener('input', () => { if (!editadaManualmente) calcular(); });
+    if (campoEntrada) campoEntrada.addEventListener('input', () => { if (!editadaManualmente) calcular(); });
+    campoSaida.addEventListener('input', () => { editadaManualmente = true; });
+    if (calcularAoAbrir) calcular();
+  },
+
   _abrirFormEntradaLote(container, fazenda, pasto, valoresIniciais) {
     UI.abrirFormulario({
       titulo: `Registrar entrada de lote — ${pasto.nome}`,
@@ -674,11 +702,12 @@ const Mapa = {
         { key: 'nome_lote', label: 'Nome/identificação do lote', type: 'text', required: true },
         { key: 'quantidade_animais', label: 'Quantidade de animais', type: 'number' },
         { key: 'data_entrada', label: 'Data de entrada', type: 'date', required: true, default: Utils.hoje() },
-        { key: 'data_saida_prevista', label: 'Data de saída prevista (opcional, já deixa programado)', type: 'date' },
         { key: 'dias_previstos', label: 'Dias previstos neste piquete', type: 'number', placeholder: 'ex: 30' },
+        { key: 'data_saida_prevista', label: 'Data de saída prevista (calculada — pode ajustar)', type: 'date' },
         { key: 'observacao', label: 'Observação', type: 'textarea' }
       ],
       dados: valoresIniciais || {},
+      onRender: (box) => this._ligarCalculoSaidaPrevista(box, { calcularAoAbrir: true }),
       onSalvar: async (dados) => {
         await Api.criar('talhao_ocupacoes', Object.assign({ talhao_id: pasto.id }, dados));
         Utils.toast('Entrada do lote registrada.');
@@ -694,11 +723,12 @@ const Mapa = {
         { key: 'nome_lote', label: 'Nome/identificação do lote', type: 'text', required: true },
         { key: 'quantidade_animais', label: 'Quantidade de animais', type: 'number' },
         { key: 'data_entrada', label: 'Data de entrada', type: 'date', required: true },
-        { key: 'data_saida_prevista', label: 'Data de saída prevista (opcional)', type: 'date' },
         { key: 'dias_previstos', label: 'Dias previstos neste piquete', type: 'number', placeholder: 'ex: 30' },
+        { key: 'data_saida_prevista', label: 'Data de saída prevista (calculada — pode ajustar)', type: 'date' },
         { key: 'observacao', label: 'Observação', type: 'textarea' }
       ],
       dados: ocupacao,
+      onRender: (box) => this._ligarCalculoSaidaPrevista(box, { calcularAoAbrir: false }),
       onSalvar: async (dados) => {
         await Api.atualizar('talhao_ocupacoes', ocupacao.id, dados);
         Utils.toast('Lote atualizado.');
@@ -732,9 +762,10 @@ const Mapa = {
       titulo: `Mover lote "${ocupacao.nome_lote}" de "${pastoOrigem.nome}"`,
       schema: [
         { key: 'talhao_destino', label: 'Novo piquete', type: 'select', options: opcoesPiquete, required: true },
-        { key: 'data_saida_prevista', label: 'Saída prevista no novo piquete (opcional)', type: 'date' },
-        { key: 'dias_previstos', label: 'Dias previstos no novo piquete', type: 'number', placeholder: 'ex: 30', default: ocupacao.dias_previstos }
+        { key: 'dias_previstos', label: 'Dias previstos no novo piquete', type: 'number', placeholder: 'ex: 30', default: ocupacao.dias_previstos },
+        { key: 'data_saida_prevista', label: 'Saída prevista no novo piquete (calculada — pode ajustar)', type: 'date' }
       ],
+      onRender: (box) => this._ligarCalculoSaidaPrevista(box, { entradaFixa: Utils.hoje(), calcularAoAbrir: true }),
       onSalvar: async (dados) => {
         await Api.atualizar('talhao_ocupacoes', ocupacao.id, { data_saida: Utils.hoje() });
         await Api.criar('talhao_ocupacoes', {
