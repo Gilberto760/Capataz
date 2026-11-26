@@ -382,10 +382,10 @@ const Mapa = {
       let linhaOcupacao = '';
       if (ocupacao) {
         const dias = Utils.diasEntre(ocupacao.data_entrada);
-        const atrasado = ocupacao.dias_previstos != null && dias > ocupacao.dias_previstos;
+        const atrasado = this._ocupacaoAtrasada(ocupacao);
         linhaOcupacao = `
           <div class="rec-row ocupacao-pasto ${atrasado ? 'atrasado' : ''}">
-            <span>🐄 ${Utils.escapeHtml(ocupacao.nome_lote)}${ocupacao.quantidade_animais ? ' (' + ocupacao.quantidade_animais + ' animais)' : ''} — ${dias} dia(s)${ocupacao.dias_previstos != null ? ' / previsto ' + ocupacao.dias_previstos : ''}</span>
+            <span>🐄 ${Utils.escapeHtml(ocupacao.nome_lote)}${ocupacao.quantidade_animais ? ' (' + ocupacao.quantidade_animais + ' animais)' : ''} — ${dias} dia(s)${ocupacao.dias_previstos != null ? ' / previsto ' + ocupacao.dias_previstos : ''}${ocupacao.data_saida_prevista ? ' / sai em ' + Utils.fmtData(ocupacao.data_saida_prevista) : ''}</span>
           </div>`;
       }
       return `
@@ -553,6 +553,15 @@ const Mapa = {
     return Api.list('talhao_ocupacoes').find(o => o.talhao_id === talhaoId && !o.data_saida) || null;
   },
 
+  /* Passou do previsto tanto por quantidade de dias quanto por já ter ultrapassado a data de
+     saída prevista (programada na entrada ou ajustada depois) — qualquer um dos dois conta. */
+  _ocupacaoAtrasada(ocupacao) {
+    const dias = Utils.diasEntre(ocupacao.data_entrada);
+    if (ocupacao.dias_previstos != null && dias > ocupacao.dias_previstos) return true;
+    if (ocupacao.data_saida_prevista && ocupacao.data_saida_prevista < Utils.hoje()) return true;
+    return false;
+  },
+
   _gerenciarOcupacao(container, fazenda, pasto) {
     const ocupacao = this._ocupacaoAberta(pasto.id);
     if (!ocupacao) {
@@ -561,12 +570,13 @@ const Mapa = {
     }
 
     const dias = Utils.diasEntre(ocupacao.data_entrada);
-    const atrasado = ocupacao.dias_previstos != null && dias > ocupacao.dias_previstos;
+    const atrasado = this._ocupacaoAtrasada(ocupacao);
     const html = `
       <div class="rec-row" style="justify-content:space-between;padding:6px 0;"><span>Lote</span><b>${Utils.escapeHtml(ocupacao.nome_lote)}</b></div>
       ${ocupacao.quantidade_animais ? `<div class="rec-row" style="justify-content:space-between;padding:6px 0;"><span>Quantidade de animais</span><b>${ocupacao.quantidade_animais}</b></div>` : ''}
       <div class="rec-row" style="justify-content:space-between;padding:6px 0;"><span>Entrada</span><b>${Utils.fmtData(ocupacao.data_entrada)}</b></div>
       <div class="rec-row" style="justify-content:space-between;padding:6px 0;"><span>Dias neste piquete</span><b class="${atrasado ? 'texto-atrasado' : ''}">${dias} dia(s)${ocupacao.dias_previstos != null ? ' / previsto ' + ocupacao.dias_previstos : ''}</b></div>
+      ${ocupacao.data_saida_prevista ? `<div class="rec-row" style="justify-content:space-between;padding:6px 0;"><span>Saída prevista</span><b class="${atrasado ? 'texto-atrasado' : ''}">${Utils.fmtData(ocupacao.data_saida_prevista)}</b></div>` : ''}
       ${atrasado ? `<p class="hint" style="color:var(--red-600);">⚠️ Esse lote já passou do previsto pra esse piquete.</p>` : ''}
       ${ocupacao.observacao ? `<p class="hint">${Utils.escapeHtml(ocupacao.observacao)}</p>` : ''}
     `;
@@ -587,11 +597,9 @@ const Mapa = {
       document.getElementById('modalOverlay').classList.remove('open');
       this._abrirFormMoverOcupacao(container, fazenda, pasto, ocupacao);
     });
-    box.querySelector('#btnSairOcupacao').addEventListener('click', async () => {
-      if (!Utils.confirmar(`Registrar saída do lote "${ocupacao.nome_lote}" deste piquete hoje?`)) return;
-      await Api.atualizar('talhao_ocupacoes', ocupacao.id, { data_saida: Utils.hoje() });
-      Utils.toast('Saída registrada.');
-      App.refresh();
+    box.querySelector('#btnSairOcupacao').addEventListener('click', () => {
+      document.getElementById('modalOverlay').classList.remove('open');
+      this._abrirFormRegistrarSaida(pasto, ocupacao);
     });
   },
 
@@ -602,6 +610,7 @@ const Mapa = {
         { key: 'nome_lote', label: 'Nome/identificação do lote', type: 'text', required: true },
         { key: 'quantidade_animais', label: 'Quantidade de animais', type: 'number' },
         { key: 'data_entrada', label: 'Data de entrada', type: 'date', required: true, default: Utils.hoje() },
+        { key: 'data_saida_prevista', label: 'Data de saída prevista (opcional, já deixa programado)', type: 'date' },
         { key: 'dias_previstos', label: 'Dias previstos neste piquete', type: 'number', placeholder: 'ex: 30' },
         { key: 'observacao', label: 'Observação', type: 'textarea' }
       ],
@@ -621,6 +630,7 @@ const Mapa = {
         { key: 'nome_lote', label: 'Nome/identificação do lote', type: 'text', required: true },
         { key: 'quantidade_animais', label: 'Quantidade de animais', type: 'number' },
         { key: 'data_entrada', label: 'Data de entrada', type: 'date', required: true },
+        { key: 'data_saida_prevista', label: 'Data de saída prevista (opcional)', type: 'date' },
         { key: 'dias_previstos', label: 'Dias previstos neste piquete', type: 'number', placeholder: 'ex: 30' },
         { key: 'observacao', label: 'Observação', type: 'textarea' }
       ],
@@ -628,6 +638,22 @@ const Mapa = {
       onSalvar: async (dados) => {
         await Api.atualizar('talhao_ocupacoes', ocupacao.id, dados);
         Utils.toast('Lote atualizado.');
+        App.refresh();
+      }
+    });
+  },
+
+  /* A data de saída é um campo que o usuário escolhe (não necessariamente hoje) — assim dá pra
+     tirar o lote antes do previsto, ou corrigir/lançar uma saída que já aconteceu em outro dia. */
+  _abrirFormRegistrarSaida(pasto, ocupacao) {
+    UI.abrirFormulario({
+      titulo: `Registrar saída — ${ocupacao.nome_lote}`,
+      schema: [
+        { key: 'data_saida', label: 'Data de saída', type: 'date', required: true, default: Utils.hoje() }
+      ],
+      onSalvar: async (dados) => {
+        await Api.atualizar('talhao_ocupacoes', ocupacao.id, { data_saida: dados.data_saida });
+        Utils.toast('Saída registrada.');
         App.refresh();
       }
     });
@@ -642,6 +668,7 @@ const Mapa = {
       titulo: `Mover lote "${ocupacao.nome_lote}" de "${pastoOrigem.nome}"`,
       schema: [
         { key: 'talhao_destino', label: 'Novo piquete', type: 'select', options: opcoesPiquete, required: true },
+        { key: 'data_saida_prevista', label: 'Saída prevista no novo piquete (opcional)', type: 'date' },
         { key: 'dias_previstos', label: 'Dias previstos no novo piquete', type: 'number', placeholder: 'ex: 30', default: ocupacao.dias_previstos }
       ],
       onSalvar: async (dados) => {
@@ -651,6 +678,7 @@ const Mapa = {
           nome_lote: ocupacao.nome_lote,
           quantidade_animais: ocupacao.quantidade_animais,
           data_entrada: Utils.hoje(),
+          data_saida_prevista: dados.data_saida_prevista || null,
           dias_previstos: dados.dias_previstos || null
         });
         Utils.toast('Lote movido de piquete.');

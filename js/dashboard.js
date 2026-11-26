@@ -58,17 +58,15 @@ const Dashboard = {
     const alertas = [];
     tarefasAtrasadas.forEach(t => alertas.push({ texto: `Tarefa atrasada: ${t.titulo}`, cls: 'red' }));
 
-    // Lote que já passou do tempo previsto num piquete (rotação de pastagem) — compara dias
-    // decorridos desde a entrada com dias_previstos, igual ao resto do app faz pra "atrasado".
+    // Lote que já passou do previsto num piquete (rotação de pastagem) — por dias_previstos OU
+    // por já ter passado da data de saída prevista, mesma regra usada no Mapa (Mapa._ocupacaoAtrasada).
     const talhoesPorId = {};
     Api.list('talhoes').forEach(t => { talhoesPorId[t.id] = t; });
     Api.list('talhao_ocupacoes').filter(o => !o.data_saida).forEach(o => {
-      if (o.dias_previstos == null) return;
+      if (!Mapa._ocupacaoAtrasada(o)) return;
       const dias = Utils.diasEntre(o.data_entrada);
-      if (dias > o.dias_previstos) {
-        const talhao = talhoesPorId[o.talhao_id];
-        alertas.push({ texto: `Piquete${talhao ? ' "' + talhao.nome + '"' : ''}: lote "${o.nome_lote}" há ${dias} dia(s) (previsto ${o.dias_previstos}) — hora de rodar.`, cls: 'orange' });
-      }
+      const talhao = talhoesPorId[o.talhao_id];
+      alertas.push({ texto: `Piquete${talhao ? ' "' + talhao.nome + '"' : ''}: lote "${o.nome_lote}" há ${dias} dia(s)${o.dias_previstos != null ? ' (previsto ' + o.dias_previstos + ')' : ''} — hora de rodar.`, cls: 'orange' });
     });
 
     if (Api.pendencias()) alertas.push({ texto: `${Api.pendencias()} alteração(ões) aguardando sincronizar com a planilha.`, cls: 'orange' });
