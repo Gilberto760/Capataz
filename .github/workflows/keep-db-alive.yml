@@ -1,0 +1,25 @@
+name: Manter banco de dados ativo
+
+# O Supabase (plano free) pausa o projeto depois de uma semana sem nenhuma consulta ao banco.
+# Esse workflow faz uma consulta simples de tempos em tempos só pra contar como atividade e
+# evitar que o banco seja pausado sozinho.
+on:
+  schedule:
+    - cron: '0 12 */5 * *' # por volta das 12:00 UTC, a cada 5 dias
+  workflow_dispatch: # permite rodar manualmente em Actions > Manter banco de dados ativo > Run workflow
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Consultar o Supabase
+        env:
+          SUPABASE_URL: https://fuanbfdxpjgvmgvrtbxo.supabase.co
+          # Chave "publishable" do projeto — a mesma já embutida no app (js/api.js), não é segredo.
+          SUPABASE_KEY: sb_publishable_mITkLkbTcHi4pz14U58ixg_pv0r-Qr6
+        run: |
+          curl -sf "$SUPABASE_URL/rest/v1/fazendas?select=id&limit=1" \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_KEY" \
+            -o /dev/null
+          echo "Banco consultado com sucesso em $(date -u)."
