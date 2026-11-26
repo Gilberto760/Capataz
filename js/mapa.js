@@ -399,6 +399,7 @@ const Mapa = {
         </div>
         ${linhaOcupacao}
         <div class="rec-row">
+          <button type="button" class="btn btn-ghost" data-stop data-historico-pasto="${r.id}" style="padding:4px 8px;">📜 Histórico</button>
           <button type="button" class="btn btn-ghost" data-stop data-ocupacao-pasto="${r.id}" style="padding:4px 8px;margin-left:auto;">${ocupacao ? '🐄 Gerenciar lote' : '🐄 Registrar entrada de lote'}</button>
         </div>
       </div>`;
@@ -468,6 +469,9 @@ const Mapa = {
     });
     elLista.querySelectorAll('[data-ocupacao-pasto]').forEach(btn => {
       btn.addEventListener('click', () => this._gerenciarOcupacao(container, fazenda, Api.get('talhoes', btn.dataset.ocupacaoPasto)));
+    });
+    elLista.querySelectorAll('[data-historico-pasto]').forEach(btn => {
+      btn.addEventListener('click', () => this._abrirHistoricoOcupacoes(Api.get('talhoes', btn.dataset.historicoPasto)));
     });
     // Lembra quais pastas o usuário abriu, pra não recolher tudo de novo a cada re-render
     // (ex: depois de ocultar um pasto que está dentro de uma pasta aberta).
@@ -586,6 +590,7 @@ const Mapa = {
       acoes: `
         <button type="button" class="btn btn-ghost" id="btnEditarOcupacao">✏️ Editar</button>
         <button type="button" class="btn btn-ghost" id="btnMoverOcupacao">➡️ Mover p/ outro piquete</button>
+        <button type="button" class="btn btn-ghost" id="btnExcluirOcupacao" style="color:var(--red-600);">🗑️ Desfazer entrada</button>
         <button type="button" class="btn btn-danger" id="btnSairOcupacao">Registrar saída</button>
       `
     });
@@ -601,6 +606,65 @@ const Mapa = {
       document.getElementById('modalOverlay').classList.remove('open');
       this._abrirFormRegistrarSaida(pasto, ocupacao);
     });
+    box.querySelector('#btnExcluirOcupacao').addEventListener('click', async () => {
+      if (!Utils.confirmar(`Desfazer essa entrada do lote "${ocupacao.nome_lote}" neste piquete? Isso apaga o registro, como se nunca tivesse acontecido.`)) return;
+      await Api.excluir('talhao_ocupacoes', ocupacao.id);
+      Utils.toast('Entrada desfeita.');
+      App.refresh();
+    });
+  },
+
+  /* Lista todas as passagens (abertas e encerradas) de um piquete, com opção de desfazer
+     qualquer uma delas — seja uma entrada feita por engano (exclui o registro) ou uma saída/
+     movimentação feita por engano (reabre, voltando o lote a "ativo" nesse piquete). */
+  _abrirHistoricoOcupacoes(pasto) {
+    const ocupacoes = Api.list('talhao_ocupacoes')
+      .filter(o => o.talhao_id === pasto.id)
+      .sort((a, b) => (b.data_entrada || '').localeCompare(a.data_entrada || ''));
+
+    const render = () => {
+      const linhas = ocupacoes.length ? ocupacoes.map(o => `
+        <div class="rec-row" style="justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
+          <span>
+            <b>${Utils.escapeHtml(o.nome_lote)}</b>${o.quantidade_animais ? ' (' + o.quantidade_animais + ' animais)' : ''}<br/>
+            <span class="hint">${Utils.fmtData(o.data_entrada)} → ${o.data_saida ? Utils.fmtData(o.data_saida) : 'ainda neste piquete'}</span>
+          </span>
+          <span style="display:flex;gap:6px;flex-shrink:0;">
+            ${o.data_saida ? `<button type="button" class="btn btn-ghost" data-reabrir="${o.id}" style="padding:4px 8px;">↩️ Reabrir</button>` : ''}
+            <button type="button" class="btn btn-ghost" data-excluir-ocupacao="${o.id}" style="padding:4px 8px;color:var(--red-600);">🗑️ Excluir</button>
+          </span>
+        </div>`).join('') : '<div class="empty-state">Nenhuma movimentação registrada neste piquete.</div>';
+
+      const box = UI.abrirInfo({ titulo: `Histórico — ${pasto.nome}`, html: linhas });
+
+      box.querySelectorAll('[data-reabrir]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const o = ocupacoes.find(x => x.id === btn.dataset.reabrir);
+          if (this._ocupacaoAberta(pasto.id)) {
+            Utils.toast('Já existe um lote ativo neste piquete agora — registre a saída dele (ou exclua) antes de reabrir este.', 'error');
+            return;
+          }
+          if (!Utils.confirmar(`Reabrir "${o.nome_lote}" neste piquete (desfazer a saída de ${Utils.fmtData(o.data_saida)})?`)) return;
+          await Api.atualizar('talhao_ocupacoes', o.id, { data_saida: null });
+          o.data_saida = null;
+          Utils.toast('Saída desfeita — lote reaberto neste piquete.');
+          App.refresh();
+          render();
+        });
+      });
+      box.querySelectorAll('[data-excluir-ocupacao]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const o = ocupacoes.find(x => x.id === btn.dataset.excluirOcupacao);
+          if (!Utils.confirmar(`Excluir esse registro de "${o.nome_lote}" (${Utils.fmtData(o.data_entrada)})? Essa ação não pode ser desfeita.`)) return;
+          await Api.excluir('talhao_ocupacoes', o.id);
+          ocupacoes.splice(ocupacoes.indexOf(o), 1);
+          Utils.toast('Registro excluído.');
+          App.refresh();
+          render();
+        });
+      });
+    };
+    render();
   },
 
   _abrirFormEntradaLote(container, fazenda, pasto, valoresIniciais) {
