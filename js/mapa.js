@@ -383,9 +383,13 @@ const Mapa = {
       if (ocupacao) {
         const dias = Utils.diasEntre(ocupacao.data_entrada);
         const atrasado = this._ocupacaoAtrasada(ocupacao);
+        // "sai em" (futuro) vira "deveria ter saído em" quando essa data já passou e o lote
+        // ainda está no piquete — senão fica estranho mostrar uma data passada como se fosse
+        // uma previsão futura.
+        const saidaPassou = ocupacao.data_saida_prevista && ocupacao.data_saida_prevista < Utils.hoje();
         linhaOcupacao = `
           <div class="rec-row ocupacao-pasto ${atrasado ? 'atrasado' : ''}">
-            <span>🐄 ${Utils.escapeHtml(ocupacao.nome_lote)}${ocupacao.quantidade_animais ? ' (' + ocupacao.quantidade_animais + ' animais)' : ''} — ${dias} dia(s)${ocupacao.dias_previstos != null ? ' / previsto ' + ocupacao.dias_previstos : ''}${ocupacao.data_saida_prevista ? ' / sai em ' + Utils.fmtData(ocupacao.data_saida_prevista) : ''}</span>
+            <span>🐄 ${Utils.escapeHtml(ocupacao.nome_lote)}${ocupacao.quantidade_animais ? ' (' + ocupacao.quantidade_animais + ' animais)' : ''} — ${dias} dia(s)${ocupacao.dias_previstos != null ? ' / previsto ' + ocupacao.dias_previstos : ''}${ocupacao.data_saida_prevista ? (saidaPassou ? ' / deveria ter saído em ' : ' / sai em ') + Utils.fmtData(ocupacao.data_saida_prevista) : ''}</span>
           </div>`;
       }
       return `
@@ -727,12 +731,13 @@ const Mapa = {
         { key: 'data_entrada', label: 'Data de entrada', type: 'date', required: true },
         { key: 'dias_previstos', label: 'Dias previstos neste piquete', type: 'number', placeholder: 'ex: 30' },
         { key: 'data_saida_prevista', label: 'Data de saída prevista (calculada — pode ajustar)', type: 'date' },
+        { key: 'data_saida', label: 'Data de saída efetiva (só preencha se o lote já saiu de verdade)', type: 'date' },
         { key: 'observacao', label: 'Observação', type: 'textarea' }
       ],
       dados: ocupacao,
       onRender: (box) => this._ligarCalculoSaidaPrevista(box, { calcularAoAbrir: false }),
       onSalvar: async (dados) => {
-        await Api.atualizar('talhao_ocupacoes', ocupacao.id, dados);
+        await Api.atualizar('talhao_ocupacoes', ocupacao.id, Object.assign({}, dados, { data_saida: dados.data_saida || null }));
         Utils.toast('Lote atualizado.');
         App.refresh();
       }
