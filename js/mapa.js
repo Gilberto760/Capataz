@@ -4,6 +4,8 @@ const Mapa = {
 
   _mapa: null,
   _grupoPastos: null,   // L.FeatureGroup com os polígonos editáveis (1 por talhão)
+  _grupoOcupacao: null, // L.FeatureGroup com o ícone 🐄 dos pastos com lote ativo (não editável)
+  _marcadoresOcupacao: {}, // talhaoId -> marker do ícone de ocupação (só existe pra quem tem lote ativo)
   _grupoFazenda: null,  // contorno da fazenda (referência, não editável)
   _grupoMedida: null,   // desenho temporário de medição (não salva)
   _medirDistancia: null,
@@ -233,7 +235,9 @@ const Mapa = {
     // Os ocultos (toggle de visualização) ganham o layer mas não entram no grupo — assim não aparecem
     // no mapa nem contam pros bounds/zoom automático, mas continuam na lista pra serem reativados.
     this._grupoPastos = L.featureGroup().addTo(mapa);
+    this._grupoOcupacao = L.featureGroup().addTo(mapa);
     this._pastoLayers = {};
+    this._marcadoresOcupacao = {};
     this._pastosDaFazenda(fazenda).forEach(pasto => {
       const pontos = Cadastros.parseCoordenadasPoligono(pasto.poligono);
       if (!pontos) return;
@@ -242,6 +246,24 @@ const Mapa = {
       layer.bindTooltip(pasto.nome);
       this._pastoLayers[pasto.id] = layer;
       if (!this._pastosOcultos.has(pasto.id)) this._grupoPastos.addLayer(layer);
+
+      const ocupacao = this._ocupacaoAberta(pasto.id);
+      if (ocupacao) {
+        const atrasado = this._ocupacaoAtrasada(ocupacao);
+        const marcador = L.marker(layer.getBounds().getCenter(), {
+          icon: L.divIcon({
+            className: `icone-ocupacao-mapa ${atrasado ? 'atrasado' : ''}`,
+            html: '🐄',
+            iconSize: [26, 26],
+            iconAnchor: [13, 13]
+          }),
+          interactive: true
+        });
+        marcador.bindTooltip(`${ocupacao.nome_lote} — ${Utils.diasEntre(ocupacao.data_entrada)} dia(s) neste piquete`);
+        marcador.on('click', () => this._gerenciarOcupacao(container, fazenda, pasto));
+        this._marcadoresOcupacao[pasto.id] = marcador;
+        if (!this._pastosOcultos.has(pasto.id)) this._grupoOcupacao.addLayer(marcador);
+      }
     });
 
     const bounds = this._grupoFazenda.getBounds().isValid() ? this._grupoFazenda.getBounds()
@@ -519,12 +541,15 @@ const Mapa = {
   /* Oculta/mostra um pasto no mapa (não exclui nada, só tira/coloca o polígono do grupo visível). */
   _alternarVisibilidadePasto(id) {
     const layer = this._pastoLayers[id];
+    const marcador = this._marcadoresOcupacao[id];
     if (this._pastosOcultos.has(id)) {
       this._pastosOcultos.delete(id);
       if (layer) this._grupoPastos.addLayer(layer);
+      if (marcador) this._grupoOcupacao.addLayer(marcador);
     } else {
       this._pastosOcultos.add(id);
       if (layer) this._grupoPastos.removeLayer(layer);
+      if (marcador) this._grupoOcupacao.removeLayer(marcador);
     }
   },
 
@@ -540,8 +565,9 @@ const Mapa = {
     pastos.forEach(t => {
       if (todasOcultas) this._pastosOcultos.delete(t.id); else this._pastosOcultos.add(t.id);
       const layer = this._pastoLayers[t.id];
-      if (!layer) return;
-      if (todasOcultas) this._grupoPastos.addLayer(layer); else this._grupoPastos.removeLayer(layer);
+      if (layer) { if (todasOcultas) this._grupoPastos.addLayer(layer); else this._grupoPastos.removeLayer(layer); }
+      const marcador = this._marcadoresOcupacao[t.id];
+      if (marcador) { if (todasOcultas) this._grupoOcupacao.addLayer(marcador); else this._grupoOcupacao.removeLayer(marcador); }
     });
   },
 
