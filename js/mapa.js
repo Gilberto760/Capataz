@@ -378,6 +378,16 @@ const Mapa = {
 
     const cardPasto = (r) => {
       const oculto = this._pastosOcultos.has(r.id);
+      const ocupacao = this._ocupacaoAberta(r.id);
+      let linhaOcupacao = '';
+      if (ocupacao) {
+        const dias = Utils.diasEntre(ocupacao.data_entrada);
+        const atrasado = ocupacao.dias_previstos != null && dias > ocupacao.dias_previstos;
+        linhaOcupacao = `
+          <div class="rec-row ocupacao-pasto ${atrasado ? 'atrasado' : ''}">
+            <span>🐄 ${Utils.escapeHtml(ocupacao.nome_lote)}${ocupacao.quantidade_animais ? ' (' + ocupacao.quantidade_animais + ' animais)' : ''} — ${dias} dia(s)${ocupacao.dias_previstos != null ? ' / previsto ' + ocupacao.dias_previstos : ''}</span>
+          </div>`;
+      }
       return `
       <div class="rec-card ${oculto ? 'pasto-oculto' : ''}" data-pasto="${r.id}">
         <div class="rec-title">${Utils.escapeHtml(r.nome)} ${r._pendente ? UI.badge('Pendente', 'orange') : ''}</div>
@@ -386,6 +396,10 @@ const Mapa = {
           <span>${Utils.escapeHtml(r.tipo_uso || '-')}</span>
           <button type="button" class="btn btn-ghost" data-stop data-toggle-visivel="${r.id}" title="${oculto ? 'Mostrar no mapa' : 'Ocultar do mapa'}" style="padding:4px 8px;margin-left:auto;">${oculto ? '🚫' : '👁️'}</button>
           <button type="button" class="btn btn-ghost" data-stop data-editar-pasto="${r.id}" style="padding:4px 8px;">✏️ Renomear</button>
+        </div>
+        ${linhaOcupacao}
+        <div class="rec-row">
+          <button type="button" class="btn btn-ghost" data-stop data-ocupacao-pasto="${r.id}" style="padding:4px 8px;margin-left:auto;">${ocupacao ? '🐄 Gerenciar lote' : '🐄 Registrar entrada de lote'}</button>
         </div>
       </div>`;
     };
@@ -451,6 +465,9 @@ const Mapa = {
         this._atualizarBotaoAlternarTodos(container, fazenda);
         this._renderListaPastos(container, fazenda);
       });
+    });
+    elLista.querySelectorAll('[data-ocupacao-pasto]').forEach(btn => {
+      btn.addEventListener('click', () => this._gerenciarOcupacao(container, fazenda, Api.get('talhoes', btn.dataset.ocupacaoPasto)));
     });
     // Lembra quais pastas o usuário abriu, pra não recolher tudo de novo a cada re-render
     // (ex: depois de ocultar um pasto que está dentro de uma pasta aberta).
@@ -526,5 +543,119 @@ const Mapa = {
 
   _alternarVisibilidadeTodos(fazenda) {
     this._alternarVisibilidadeConjunto(this._pastosDaFazenda(fazenda));
+  },
+
+  /* ---------- Rotação de pastagem: qual lote está em qual piquete, há quantos dias ---------- */
+
+  /* A ocupação "aberta" de um piquete é a que ainda não tem data_saida — só pode haver uma por vez
+     (quem cria uma nova entrada sempre encerra a anterior antes, ver _gerenciarOcupacao). */
+  _ocupacaoAberta(talhaoId) {
+    return Api.list('talhao_ocupacoes').find(o => o.talhao_id === talhaoId && !o.data_saida) || null;
+  },
+
+  _gerenciarOcupacao(container, fazenda, pasto) {
+    const ocupacao = this._ocupacaoAberta(pasto.id);
+    if (!ocupacao) {
+      this._abrirFormEntradaLote(container, fazenda, pasto);
+      return;
+    }
+
+    const dias = Utils.diasEntre(ocupacao.data_entrada);
+    const atrasado = ocupacao.dias_previstos != null && dias > ocupacao.dias_previstos;
+    const html = `
+      <div class="rec-row" style="justify-content:space-between;padding:6px 0;"><span>Lote</span><b>${Utils.escapeHtml(ocupacao.nome_lote)}</b></div>
+      ${ocupacao.quantidade_animais ? `<div class="rec-row" style="justify-content:space-between;padding:6px 0;"><span>Quantidade de animais</span><b>${ocupacao.quantidade_animais}</b></div>` : ''}
+      <div class="rec-row" style="justify-content:space-between;padding:6px 0;"><span>Entrada</span><b>${Utils.fmtData(ocupacao.data_entrada)}</b></div>
+      <div class="rec-row" style="justify-content:space-between;padding:6px 0;"><span>Dias neste piquete</span><b class="${atrasado ? 'texto-atrasado' : ''}">${dias} dia(s)${ocupacao.dias_previstos != null ? ' / previsto ' + ocupacao.dias_previstos : ''}</b></div>
+      ${atrasado ? `<p class="hint" style="color:var(--red-600);">⚠️ Esse lote já passou do previsto pra esse piquete.</p>` : ''}
+      ${ocupacao.observacao ? `<p class="hint">${Utils.escapeHtml(ocupacao.observacao)}</p>` : ''}
+    `;
+    const box = UI.abrirInfo({
+      titulo: `Lote em "${pasto.nome}"`,
+      html,
+      acoes: `
+        <button type="button" class="btn btn-ghost" id="btnEditarOcupacao">✏️ Editar</button>
+        <button type="button" class="btn btn-ghost" id="btnMoverOcupacao">➡️ Mover p/ outro piquete</button>
+        <button type="button" class="btn btn-danger" id="btnSairOcupacao">Registrar saída</button>
+      `
+    });
+    box.querySelector('#btnEditarOcupacao').addEventListener('click', () => {
+      document.getElementById('modalOverlay').classList.remove('open');
+      this._abrirFormEditarOcupacao(container, fazenda, pasto, ocupacao);
+    });
+    box.querySelector('#btnMoverOcupacao').addEventListener('click', () => {
+      document.getElementById('modalOverlay').classList.remove('open');
+      this._abrirFormMoverOcupacao(container, fazenda, pasto, ocupacao);
+    });
+    box.querySelector('#btnSairOcupacao').addEventListener('click', async () => {
+      if (!Utils.confirmar(`Registrar saída do lote "${ocupacao.nome_lote}" deste piquete hoje?`)) return;
+      await Api.atualizar('talhao_ocupacoes', ocupacao.id, { data_saida: Utils.hoje() });
+      Utils.toast('Saída registrada.');
+      App.refresh();
+    });
+  },
+
+  _abrirFormEntradaLote(container, fazenda, pasto, valoresIniciais) {
+    UI.abrirFormulario({
+      titulo: `Registrar entrada de lote — ${pasto.nome}`,
+      schema: [
+        { key: 'nome_lote', label: 'Nome/identificação do lote', type: 'text', required: true },
+        { key: 'quantidade_animais', label: 'Quantidade de animais', type: 'number' },
+        { key: 'data_entrada', label: 'Data de entrada', type: 'date', required: true, default: Utils.hoje() },
+        { key: 'dias_previstos', label: 'Dias previstos neste piquete', type: 'number', placeholder: 'ex: 30' },
+        { key: 'observacao', label: 'Observação', type: 'textarea' }
+      ],
+      dados: valoresIniciais || {},
+      onSalvar: async (dados) => {
+        await Api.criar('talhao_ocupacoes', Object.assign({ talhao_id: pasto.id }, dados));
+        Utils.toast('Entrada do lote registrada.');
+        App.refresh();
+      }
+    });
+  },
+
+  _abrirFormEditarOcupacao(container, fazenda, pasto, ocupacao) {
+    UI.abrirFormulario({
+      titulo: `Editar lote — ${pasto.nome}`,
+      schema: [
+        { key: 'nome_lote', label: 'Nome/identificação do lote', type: 'text', required: true },
+        { key: 'quantidade_animais', label: 'Quantidade de animais', type: 'number' },
+        { key: 'data_entrada', label: 'Data de entrada', type: 'date', required: true },
+        { key: 'dias_previstos', label: 'Dias previstos neste piquete', type: 'number', placeholder: 'ex: 30' },
+        { key: 'observacao', label: 'Observação', type: 'textarea' }
+      ],
+      dados: ocupacao,
+      onSalvar: async (dados) => {
+        await Api.atualizar('talhao_ocupacoes', ocupacao.id, dados);
+        Utils.toast('Lote atualizado.');
+        App.refresh();
+      }
+    });
+  },
+
+  _abrirFormMoverOcupacao(container, fazenda, pastoOrigem, ocupacao) {
+    const opcoesPiquete = this._pastosDaFazenda(fazenda)
+      .filter(t => t.id !== pastoOrigem.id)
+      .sort((a, b) => (a.nome || '').localeCompare(b.nome || ''))
+      .map(t => ({ value: t.id, label: t.nome }));
+    UI.abrirFormulario({
+      titulo: `Mover lote "${ocupacao.nome_lote}" de "${pastoOrigem.nome}"`,
+      schema: [
+        { key: 'talhao_destino', label: 'Novo piquete', type: 'select', options: opcoesPiquete, required: true },
+        { key: 'dias_previstos', label: 'Dias previstos no novo piquete', type: 'number', placeholder: 'ex: 30', default: ocupacao.dias_previstos }
+      ],
+      onSalvar: async (dados) => {
+        await Api.atualizar('talhao_ocupacoes', ocupacao.id, { data_saida: Utils.hoje() });
+        await Api.criar('talhao_ocupacoes', {
+          talhao_id: dados.talhao_destino,
+          nome_lote: ocupacao.nome_lote,
+          quantidade_animais: ocupacao.quantidade_animais,
+          data_entrada: Utils.hoje(),
+          dias_previstos: dados.dias_previstos || null
+        });
+        Utils.toast('Lote movido de piquete.');
+        App.refresh();
+      }
+    });
   }
 };

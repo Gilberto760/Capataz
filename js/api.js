@@ -10,7 +10,7 @@ const PADRAO = {
 };
 
 const TABELAS = ['animais', 'partos', 'lactacoes', 'mov_rebanho', 'adapec_declaracoes', 'talhoes', 'fazendas', 'proprietarios', 'fazenda_proprietarios', 'gta_movimentacoes', 'gta_itens', 'fornecedores', 'produtos', 'compras', 'itens_compra', 'funcionarios', 'despesas', 'centros_custo', 'producao', 'vendas', 'documentos', 'categorias_despesa', 'formas_pagamento',
-  'empreendimentos', 'empreendimento_etapas', 'tarefas', 'insumos_tarefa', 'etapa_tarefas', 'pastas_mapa'];
+  'empreendimentos', 'empreendimento_etapas', 'tarefas', 'insumos_tarefa', 'etapa_tarefas', 'pastas_mapa', 'talhao_ocupacoes'];
 
 const Api = {
   cfg: { url: '', key: '' },

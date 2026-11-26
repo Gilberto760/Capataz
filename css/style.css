@@ -206,6 +206,9 @@ body {
 .pasta-mapa-conteudo .rec-card { margin:10px 0 0; }
 .rec-card.pasto-oculto { opacity:0.55; }
 .rec-card.pasto-oculto .rec-title { text-decoration: line-through; }
+.ocupacao-pasto { font-size:13px; color: var(--text-muted); }
+.ocupacao-pasto.atrasado { color: var(--red-600); font-weight:600; }
+.texto-atrasado { color: var(--red-600); }
 .stat-card { background:#fff; border:1px solid var(--border); border-radius: var(--radius); padding:14px; }
 .stat-label { font-size:12px; color: var(--text-muted); margin-bottom:4px; }
 .stat-value { font-size:20px; font-weight:800; color: var(--text); }
