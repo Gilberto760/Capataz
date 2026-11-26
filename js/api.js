@@ -94,7 +94,7 @@ const Api = {
     if (!this.configurado()) return { ok: false };
     try {
       const resultados = await Promise.all(TABELAS.map(t =>
-        fetch(`${this.cfg.url}/rest/v1/${t}?select=*&order=created_at.desc`, { headers: this.headers() })
+        fetch(`${this.cfg.url}/rest/v1/${t}?select=*&order=created_at.desc`, { headers: this.headers(), cache: 'no-store' })
           .then(r => { if (!r.ok) throw new Error(t + ': ' + r.status); return r.json(); })
       ));
       TABELAS.forEach((t, i) => { this.cache[t] = resultados[i]; });

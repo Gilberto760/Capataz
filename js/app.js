@@ -70,7 +70,17 @@ const App = {
         window.location.reload();
       });
       navigator.serviceWorker.register('sw.js').then((reg) => {
-        reg.update().catch(() => {});
+        const verificarAtualizacao = () => reg.update().catch(() => {});
+        verificarAtualizacao();
+        // No celular o app costuma ficar aberto (minimizado) por dias sem fechar de verdade —
+        // só a checagem de quando abriu não é suficiente, porque o usuário nunca "abre" de novo
+        // de um jeito que dispare esse código. Sem isso, ele trabalha com uma versão desatualizada
+        // (dados salvam certo, mas a tela calcula/mostra com a lógica antiga) até fechar o app
+        // inteiro de verdade, o que no celular quase ninguém faz.
+        setInterval(verificarAtualizacao, 5 * 60 * 1000);
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') verificarAtualizacao();
+        });
       }).catch(() => {});
     }
   },
